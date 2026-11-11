@@ -254,13 +254,38 @@ is empty unless you implement `listInbox` / `deleteInboxItem`.
 
 ## Clients
 
-<!-- clients -->
+The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
+obtained in [`test/fixtures/SOURCES.md`](test/fixtures/SOURCES.md)).
+
+| Client                         | Fixtures from                                    | What it uses                                                                                     |
+| ------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Apple Calendar (macOS, iOS)    | recordings in Apple's CalendarServer (OS X 10.7–10.11) | well-known, principal, calendar home with `sync-collection`, CTag, `calendar-query`, multiget, free-busy |
+| Apple Reminders                | recordings in Apple's CalendarServer (iOS 5)     | calendars with `VTODO`, `calendar-query` for `VTODO`, multiget                                   |
+| Thunderbird                    | Thunderbird source (comm-central)                | PROPFIND Depth 1 or `sync-collection` for ETags, then multiget; no `calendar-query`              |
+| DAVx⁵                          | dav4jvm 5.0.0 with the property lists of DAVx⁵   | `sync-collection` (Depth 0), `calendar-query` for events and to-dos, multiget with `Schedule-Tag` |
+
+Notes per client:
+
+- **Apple Calendar** only shows calendars with `VEVENT`, **Apple Reminders** only those with `VTODO`. Shared
+  calendars without write privileges are reported read-only. A `PROPPATCH` (e.g. to change a calendar's color from
+  the client) is answered with 403; color and name come from the provider.
+- **Apple** polls the calendar home with `sync-collection`; the home sync token is computed from the calendars' tokens,
+  so it needs no storage.
+- **Thunderbird** finds the scheduling inbox and outbox through `principal-collection-set` and the principal.
+- **DAVx⁵** uses `If-Schedule-Tag-Match` when scheduling is enabled; without `scheduleTag` in your objects the ETag is
+  used.
+- Sync tokens of other servers (e.g. after moving an account) are answered with 403 `valid-sync-token`, and all clients
+  then start a full sync.
+
+The fixtures are request bodies, not complete sessions. Newer macOS and iOS versions send the same requests with some
+more properties; check a setup with the example server below, and `RECORD=…` to write down what a client sends.
 
 ## What is not supported
 
 - Creating, renaming or recoloring calendars from a client (`MKCALENDAR`, `PROPPATCH` answer 403)
 - Partial `calendar-data` (`<C:comp>`, `<C:expand>`, `<C:limit-recurrence-set>`): the full object is always returned
 - `free-busy-query` REPORT, ACLs (`DAV:acl`), locking, `COPY`/`MOVE`
+- Searching other principals: `principal-property-search` only finds the current user
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)
 - Attachments (managed attachments, RFC 8607)
 

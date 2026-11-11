@@ -1,0 +1,89 @@
+{
+  "name": "caldav-provider-server",
+  "version": "0.0.0",
+  "description": "CalDAV server library (RFC 4791, 6578, 6638, 6764) that keeps no data of its own: everything goes through a provider you implement. Ships with a Fastify plugin.",
+  "keywords": [
+    "caldav",
+    "webdav",
+    "ical",
+    "icalendar",
+    "vevent",
+    "vtodo",
+    "rfc4791",
+    "rfc6578",
+    "rfc6638",
+    "fastify",
+    "fastify-plugin"
+  ],
+  "license": "MIT",
+  "author": "Moritz Walter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nevercold/caldav-provider-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Nevercold/caldav-provider-server/issues"
+  },
+  "homepage": "https://github.com/Nevercold/caldav-provider-server#readme",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./fastify": {
+      "import": {
+        "types": "./dist/fastify.d.mts",
+        "default": "./dist/fastify.mjs"
+      },
+      "require": {
+        "types": "./dist/fastify.d.cts",
+        "default": "./dist/fastify.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "example": "node --experimental-strip-types example/server.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "fastify": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "fastify": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.12",
+    "ical.js": "^2.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "fastify": "5.12.8",
+    "ical-generator": "11.1.3",
+    "tsdown": "0.23.7",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

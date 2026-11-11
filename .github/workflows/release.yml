@@ -1,0 +1,47 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # staged publishing needs npm 12
+      - run: npm install -g npm@12
+      - run: npm ci
+
+      - name: Set version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if the version is already published
+        id: published
+        run: |
+          if npm view "caldav-provider-server@${{ steps.version.outputs.version }}" version > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The version goes live once it is approved on npmjs.com (2FA).
+      - name: Stage for publishing
+        if: steps.published.outputs.exists != 'true'
+        run: |
+          if [[ "${{ steps.version.outputs.version }}" == *-* ]]; then
+            npm stage publish --access public --tag next
+          else
+            npm stage publish --access public
+          fi

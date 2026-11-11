@@ -1,0 +1,331 @@
+import {Context, quoteEtag, type Resource, unquoteEtag} from './context.ts';
+import {CalDavError} from './errors.ts';
+import {type Component, IcsError, inspectObject, parseIcs} from './ical.ts';
+import {allPropNames, propResponse} from './props.ts';
+import {handleReport} from './report.ts';
+import {handleOutboxPost, scheduleDelete, schedulePut} from './scheduling.ts';
+import type {CalDavProvider, CalendarObject, Principal} from './types.ts';
+import {type CalDavRequest, type CalDavResponse, errorResponse, header, multistatus, parseBody} from './http.ts';
+import {children, d, el, is, NS, type QName, qnameOf, type XNode} from './xml.ts';
+
+export type {CalDavRequest, CalDavResponse};
+
+export interface CalDavOptions<P extends Principal = Principal> {
+    provider: CalDavProvider<P>;
+    /** URL path the server lives under. Default `/dav`. */
+    basePath?: string;
+    /** Realm of the Basic auth challenge. */
+    realm?: string;
+    /** Called for unexpected errors (answered with 500). */
+    onError?: (error: unknown, request: CalDavRequest) => void;
+}
+
+export type CalDavHandler = (request: CalDavRequest) => Promise<CalDavResponse>;
+
+const METHODS = ['OPTIONS', 'GET', 'HEAD', 'PUT', 'DELETE', 'PROPFIND', 'PROPPATCH', 'REPORT', 'POST', 'MKCOL', 'MKCALENDAR', 'MOVE', 'COPY'];
+
+/** HTTP methods the server answers; frameworks need to route these. */
+export const CALDAV_METHODS: readonly string[] = METHODS;
+
+function parseBasicAuth(value: string | undefined): {username: string; password: string} | null {
+    const m = /^Basic\s+(\S+)$/i.exec(value ?? '');
+    if (!m) return null;
+    const decoded = Buffer.from(m[1]!, 'base64').toString('utf8');
+    const i = decoded.indexOf(':');
+    if (i < 0) return null;
+    return {username: decoded.slice(0, i), password: decoded.slice(i + 1)};
+}
+
+/** Depth header; a missing header counts as the given default. */
+function depth(req: CalDavRequest, fallback: '0' | '1'): '0' | '1' {
+    const v = header(req, 'depth')?.trim().toLowerCase();
+    if (v === undefined || v === '') return fallback;
+    if (v === '0' || v === '1') return v;
+    if (v === 'infinity') throw CalDavError.dav(403, 'propfind-finite-depth', 'Depth: infinity is not supported');
+    throw new CalDavError(400, `invalid Depth ${v}`);
+}
+
+/** Child resources for Depth: 1. */
+export async function childResources(ctx: Context, r: Resource): Promise<Resource[]> {
+    switch (r.kind) {
+        case 'home':
+            return (await ctx.calendars()).map((calendar) => ({kind: 'calendar', calendar}));
+        case 'calendar': {
+            const objects = await ctx.provider.listObjects(ctx.principal, r.calendar, {});
+            return objects.map((object) => ({kind: 'object', calendar: r.calendar, name: object.name, object}));
+        }
+        case 'inbox':
+            return (await ctx.inboxItems()).map((object) => ({kind: 'inbox-item', name: object.name, object}));
+        default:
+            return [];
+    }
+}
+
+function exists(r: Resource): boolean {
+    return !((r.kind === 'object' || r.kind === 'inbox-item') && !r.object);
+}
+
+async function propfind(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    const dep = depth(req, '1');
+    const root = parseBody(req);
+    let mode: 'prop' | 'allprop' | 'propname' = 'allprop';
+    let props: QName[] = allPropNames();
+    if (root) {
+        if (!is(root, NS.DAV, 'propfind')) throw new CalDavError(400, 'expected DAV:propfind');
+        const kids = children(root);
+        const prop = kids.find((k) => is(k, NS.DAV, 'prop'));
+        if (prop) {
+            mode = 'prop';
+            props = children(prop).map(qnameOf);
+        } else if (kids.some((k) => is(k, NS.DAV, 'propname'))) {
+            mode = 'propname';
+        } else {
+            const include = kids.find((k) => is(k, NS.DAV, 'include'));
+            if (include) props = [...props, ...children(include).map(qnameOf)];
+        }
+    }
+
+    const target = await ctx.resolve(path);
+    if (!exists(target)) throw CalDavError.notFound();
+    const resources = [target, ...(dep === '1' ? await childResources(ctx, target) : [])];
+    const responses: XNode[] = [];
+    for (const r of resources) responses.push(await propResponse(ctx, r, props, mode));
+    return multistatus(responses);
+}
+
+/** PROPPATCH is not supported; every property answers 403 (RFC 4918 9.2). */
+async function proppatch(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    const target = await ctx.resolve(path);
+    if (!exists(target)) throw CalDavError.notFound();
+    const root = parseBody(req);
+    if (!is(root, NS.DAV, 'propertyupdate')) throw new CalDavError(400, 'expected DAV:propertyupdate');
+    const names: XNode[] = [];
+    for (const op of children(root)) {
+        for (const prop of children(op).filter((p) => is(p, NS.DAV, 'prop'))) {
+            for (const p of children(prop)) {
+                const q = qnameOf(p);
+                names.push(el(q.ns, q.name));
+            }
+        }
+    }
+    return multistatus([
+        d('response', d('href', ctx.href(target)), d('propstat', d('prop', ...names), d('status', 'HTTP/1.1 403 Forbidden'))),
+    ]);
+}
+
+function objectHeaders(ctx: Context, object: CalendarObject): Record<string, string> {
+    const h: Record<string, string> = {
+        'Content-Type': 'text/calendar; charset=utf-8',
+        ETag: quoteEtag(object.etag),
+    };
+    if (object.lastModified) h['Last-Modified'] = object.lastModified.toUTCString();
+    if (ctx.scheduling) h['Schedule-Tag'] = quoteEtag(object.scheduleTag ?? object.etag);
+    return h;
+}
+
+async function get(ctx: Context, path: string, head: boolean): Promise<CalDavResponse> {
+    const r = await ctx.resolve(path);
+    if (r.kind !== 'object' && r.kind !== 'inbox-item') {
+        throw new CalDavError(405, 'GET is only supported on calendar objects');
+    }
+    if (!r.object) throw CalDavError.notFound();
+    return {status: 200, headers: objectHeaders(ctx, r.object), body: head ? undefined : r.object.ics};
+}
+
+/** If-Match / If-None-Match (RFC 7232) and If-Schedule-Tag-Match (RFC 6638 8.3). */
+function checkPreconditions(ctx: Context, req: CalDavRequest, current: CalendarObject | null): string | undefined {
+    const tags = (v: string) => v.split(',').map((t) => t.trim()).filter(Boolean);
+    const ifMatch = header(req, 'if-match');
+    if (ifMatch !== undefined) {
+        if (!current) throw CalDavError.preconditionFailed('object does not exist');
+        const list = tags(ifMatch);
+        if (!list.includes('*') && !list.map(unquoteEtag).includes(unquoteEtag(current.etag))) {
+            throw CalDavError.preconditionFailed('ETag does not match');
+        }
+    }
+    const ifNoneMatch = header(req, 'if-none-match');
+    if (ifNoneMatch !== undefined && current) {
+        const list = tags(ifNoneMatch);
+        if (list.includes('*') || list.map(unquoteEtag).includes(unquoteEtag(current.etag))) {
+            throw CalDavError.preconditionFailed('object exists');
+        }
+    }
+    const ifScheduleTag = header(req, 'if-schedule-tag-match');
+    if (ifScheduleTag !== undefined && ctx.scheduling) {
+        if (!current) throw CalDavError.preconditionFailed('object does not exist');
+        if (unquoteEtag(ifScheduleTag.trim()) !== unquoteEtag(current.scheduleTag ?? current.etag)) {
+            throw CalDavError.preconditionFailed('Schedule-Tag does not match');
+        }
+    }
+    return ifMatch !== undefined && !tags(ifMatch).includes('*') && current ? unquoteEtag(current.etag) : undefined;
+}
+
+async function put(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    const r = await ctx.resolve(path);
+    if (r.kind !== 'object') throw new CalDavError(405, 'PUT is only supported on calendar objects');
+    if (!ctx.canWrite(r.calendar)) throw CalDavError.forbidden('calendar is read-only');
+
+    const type = header(req, 'content-type');
+    if (type && !/^text\/calendar\b/i.test(type)) throw CalDavError.caldav(415, 'supported-calendar-data');
+
+    let vcal: Component;
+    let info;
+    try {
+        vcal = parseIcs(req.body ?? '');
+    } catch (e) {
+        if (e instanceof IcsError) throw CalDavError.caldav(400, 'valid-calendar-data', e.message);
+        throw e;
+    }
+    try {
+        info = inspectObject(vcal);
+    } catch (e) {
+        if (e instanceof IcsError) throw CalDavError.caldav(400, 'valid-calendar-object-resource', e.message);
+        throw e;
+    }
+    if (!r.calendar.components.includes(info.componentType)) {
+        throw CalDavError.caldav(403, 'supported-calendar-component', `calendar does not accept ${info.componentType}`);
+    }
+    const ifMatch = checkPreconditions(ctx, req, r.object);
+
+    let ics = req.body!;
+    if (ctx.scheduling) {
+        const previous = r.object ? safeParse(r.object.ics) : null;
+        ics = (await schedulePut(ctx, vcal, previous)) ?? ics;
+    }
+
+    const result = await ctx.provider.putObject!(ctx.principal, r.calendar, {
+        name: r.name,
+        uid: info.uid,
+        ics,
+        componentType: info.componentType,
+        isNew: !r.object,
+        ifMatch,
+    });
+    const headers: Record<string, string> = {};
+    // RFC 4791 5.3.4: only send the ETag if the stored data equals what the client sent.
+    if (ics === req.body && result.etag && result.storedAsIs) {
+        headers.ETag = quoteEtag(result.etag);
+    }
+    if (ctx.scheduling && result.scheduleTag) headers['Schedule-Tag'] = quoteEtag(result.scheduleTag);
+    return {status: r.object ? 204 : 201, headers};
+}
+
+function safeParse(ics: string): Component | null {
+    try {
+        return parseIcs(ics);
+    } catch {
+        return null;
+    }
+}
+
+async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    const r = await ctx.resolve(path);
+    if (r.kind === 'inbox-item') {
+        if (!r.object) throw CalDavError.notFound();
+        const s = ctx.provider.scheduling!;
+        if (!s.deleteInboxItem) throw CalDavError.forbidden('inbox is read-only');
+        await s.deleteInboxItem(ctx.principal, r.name);
+        return {status: 204, headers: {}};
+    }
+    if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be deleted');
+    if (!r.object) throw CalDavError.notFound();
+    if (!ctx.canDelete(r.calendar)) throw CalDavError.forbidden('calendar is read-only');
+    const ifMatch = checkPreconditions(ctx, req, r.object);
+    await ctx.provider.deleteObject!(ctx.principal, r.calendar, {name: r.name, ifMatch});
+    if (ctx.scheduling) {
+        const previous = safeParse(r.object.ics);
+        const scheduleReply = header(req, 'schedule-reply')?.trim().toUpperCase() !== 'F';
+        if (previous) await scheduleDelete(ctx, previous, scheduleReply);
+    }
+    return {status: 204, headers: {}};
+}
+
+function optionsResponse(provider: CalDavProvider<never>): CalDavResponse {
+    return {
+        status: 200,
+        headers: {
+            DAV: davHeader(provider),
+            Allow: METHODS.join(', '),
+            'Content-Length': '0',
+        },
+    };
+}
+
+function davHeader(provider: CalDavProvider<never>): string {
+    return ['1', '3', 'calendar-access', ...(provider.scheduling ? ['calendar-auto-schedule'] : [])].join(', ');
+}
+
+/**
+ * Creates the framework-independent request handler.
+ *
+ * ```ts
+ * const handle = createCalDavHandler({provider});
+ * const res = await handle({method: 'PROPFIND', url: '/dav/', headers, body});
+ * ```
+ */
+export function createCalDavHandler<P extends Principal>(options: CalDavOptions<P>): CalDavHandler {
+    const provider = options.provider;
+    const base = (options.basePath ?? '/dav').replace(/\/+$/, '');
+    const realm = (options.realm ?? 'CalDAV').replace(/"/g, '');
+
+    return async (req) => {
+        const method = req.method.toUpperCase();
+        const path = new URL(req.url, 'http://x').pathname;
+        try {
+            if (path === '/.well-known/caldav' || path === '/.well-known/caldav/') {
+                return {status: 301, headers: {Location: `${base}/`}};
+            }
+            if (path !== base && !path.startsWith(`${base}/`)) throw CalDavError.notFound();
+            if (method === 'OPTIONS') return optionsResponse(provider as CalDavProvider<never>);
+
+            const credentials = parseBasicAuth(header(req, 'authorization'));
+            const principal = credentials ? await provider.authenticate(credentials.username, credentials.password) : null;
+            if (!principal) {
+                return {
+                    status: 401,
+                    headers: {'WWW-Authenticate': `Basic realm="${realm}", charset="UTF-8"`, 'Content-Type': 'text/plain'},
+                    body: 'Unauthorized',
+                };
+            }
+            const ctx = new Context(provider, base, principal);
+            let res: CalDavResponse;
+            switch (method) {
+                case 'PROPFIND':
+                    res = await propfind(ctx, req, path);
+                    break;
+                case 'PROPPATCH':
+                    res = await proppatch(ctx, req, path);
+                    break;
+                case 'REPORT':
+                    res = await handleReport(ctx, req, path);
+                    break;
+                case 'GET':
+                case 'HEAD':
+                    res = await get(ctx, path, method === 'HEAD');
+                    break;
+                case 'PUT':
+                    res = await put(ctx, req, path);
+                    break;
+                case 'DELETE':
+                    res = await del(ctx, req, path);
+                    break;
+                case 'POST':
+                    res = await handleOutboxPost(ctx, req, path);
+                    break;
+                case 'MKCOL':
+                case 'MKCALENDAR':
+                case 'MOVE':
+                case 'COPY':
+                    throw CalDavError.forbidden(`${method} is not supported`);
+                default:
+                    return {status: 405, headers: {Allow: METHODS.join(', ')}};
+            }
+            res.headers.DAV ??= davHeader(provider as CalDavProvider<never>);
+            return res;
+        } catch (e) {
+            if (e instanceof CalDavError) return errorResponse(e);
+            options.onError?.(e, req);
+            return {status: 500, headers: {'Content-Type': 'text/plain'}, body: 'Internal Server Error'};
+        }
+    };
+}

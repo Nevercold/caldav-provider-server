@@ -49,7 +49,7 @@ export function parseXml(body: string | undefined): XmlElement | null {
     return doc.documentElement;
 }
 
-export function is(el: XmlElement | null | undefined, ns: string, name: string): el is XmlElement {
+export function is(el: XmlElement | null | undefined, ns: string, name: string): boolean {
     return !!el && el.namespaceURI === ns && el.localName === name;
 }
 

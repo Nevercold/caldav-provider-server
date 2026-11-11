@@ -88,6 +88,19 @@ export interface PutObjectInput {
     ifMatch?: string;
 }
 
+export interface PutObjectResult {
+    /** ETag of the stored object. */
+    etag: string;
+    scheduleTag?: string;
+    /**
+     * True if the stored object is byte for byte the ICS from the request.
+     * Only then the ETag goes back to the client (RFC 4791 5.3.4); otherwise
+     * the client fetches the object again. Leave it out if you store the data
+     * in your own format and generate the ICS anew.
+     */
+    storedAsIs?: boolean;
+}
+
 export interface DeleteObjectInput {
     name: string;
     ifMatch?: string;
@@ -152,7 +165,7 @@ export interface CalDavProvider<P extends Principal = Principal> {
      */
     changesSince?(principal: P, calendar: Calendar, syncToken: string): Promise<Changes | null>;
     /** Create or replace an object. Without it, every calendar is read-only. */
-    putObject?(principal: P, calendar: Calendar, input: PutObjectInput): Promise<{etag: string; scheduleTag?: string}>;
+    putObject?(principal: P, calendar: Calendar, input: PutObjectInput): Promise<PutObjectResult>;
     deleteObject?(principal: P, calendar: Calendar, input: DeleteObjectInput): Promise<void>;
     /** Enables scheduling (RFC 6638). */
     scheduling?: SchedulingProvider<P>;

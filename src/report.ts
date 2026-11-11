@@ -1,7 +1,7 @@
-import {type Context, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
+import {type Context, homeSyncToken, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
-import {type CalDavRequest, type CalDavResponse, multistatus, parseBody} from './http.ts';
+import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
 import {parseIcs} from './ical.ts';
 import {propResponse, statusResponse} from './props.ts';
 import type {Calendar, CalendarObject} from './types.ts';
@@ -99,12 +99,13 @@ async function calendarMultiget(ctx: Context, root: XmlElement, path: string): P
 
 async function syncCollection(ctx: Context, root: XmlElement, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
-    if (r.kind !== 'calendar') throw CalDavError.dav(403, 'supported-report', 'sync-collection only works on calendars');
-    const calendar = r.calendar;
     const level = textOf(child(root, NS.DAV, 'sync-level')) || '1';
     if (level !== '1' && level !== 'infinite') throw new CalDavError(400, `invalid sync-level ${level}`);
     const props = requestedProps(root);
     const tokenUri = textOf(child(root, NS.DAV, 'sync-token'));
+    if (r.kind === 'home') return syncHome(ctx, tokenUri, props);
+    if (r.kind !== 'calendar') throw CalDavError.dav(403, 'supported-report', 'sync-collection only works on calendars');
+    const calendar = r.calendar;
 
     const responses: XNode[] = [];
     let newToken = calendar.syncToken;
@@ -120,6 +121,47 @@ async function syncCollection(ctx: Context, root: XmlElement, path: string): Pro
         for (const name of changes.deleted) responses.push(statusResponse(ctx.objectHref(calendar, name), 'HTTP/1.1 404 Not Found'));
     }
     return multistatus(responses, d('sync-token', syncTokenUri(newToken)));
+}
+
+/** sync-collection on the calendar home: reports added, changed and removed calendars. */
+async function syncHome(ctx: Context, tokenUri: string, props: QName[]): Promise<CalDavResponse> {
+    const calendars = await ctx.calendars();
+    let previous: Record<string, string> = {};
+    if (tokenUri) {
+        const token = parseSyncTokenUri(tokenUri);
+        const parsed = token === null ? null : parseHomeSyncToken(token);
+        if (!parsed) throw CalDavError.dav(403, 'valid-sync-token', 'unknown sync token, do a full sync');
+        previous = parsed;
+    }
+    const responses: XNode[] = [];
+    for (const calendar of calendars) {
+        if (previous[calendar.id] !== calendar.syncToken) {
+            responses.push(await propResponse(ctx, {kind: 'calendar', calendar}, props));
+        }
+    }
+    const ids = new Set(calendars.map((c) => c.id));
+    for (const id of Object.keys(previous)) {
+        if (!ids.has(id)) responses.push(statusResponse(`${ctx.homeHref()}${encodeURIComponent(id)}/`, 'HTTP/1.1 404 Not Found'));
+    }
+    return multistatus(responses, d('sync-token', syncTokenUri(homeSyncToken(calendars))));
+}
+
+/**
+ * principal-property-search (RFC 3744 9.4). Only the current user can be
+ * found; it matches if any search value is contained in its id, name or
+ * addresses.
+ */
+async function principalPropertySearch(ctx: Context, root: XmlElement): Promise<CalDavResponse> {
+    const r = await ctx.resolve(ctx.principalHref());
+    const haystack = [ctx.principal.id, ctx.principal.displayName ?? '', ...ctx.addresses(), ctx.principalHref(), ctx.homeHref()]
+        .join('\n')
+        .toLowerCase();
+    const matches = children(root)
+        .filter((c) => is(c, NS.DAV, 'property-search'))
+        .map((c) => textOf(child(c, NS.DAV, 'match')).toLowerCase());
+    const anyOf = root.getAttribute('test') !== 'allof';
+    const hit = matches.length > 0 && (anyOf ? matches.some((m) => haystack.includes(m)) : matches.every((m) => haystack.includes(m)));
+    return multistatus(hit ? [await propResponse(ctx, r, requestedProps(root))] : []);
 }
 
 /**
@@ -143,5 +185,8 @@ export async function handleReport(ctx: Context, req: CalDavRequest, path: strin
     if (is(root, NS.CALDAV, 'calendar-multiget')) return calendarMultiget(ctx, root, path);
     if (is(root, NS.DAV, 'sync-collection')) return syncCollection(ctx, root, path);
     if (is(root, NS.DAV, 'expand-property')) return expandProperty(ctx, root, path);
+    if (is(root, NS.DAV, 'principal-property-search')) return principalPropertySearch(ctx, root);
+    // No searchable properties: clients then do not offer principal search.
+    if (is(root, NS.DAV, 'principal-search-property-set')) return xmlResponse(200, d('principal-search-property-set'));
     throw CalDavError.dav(403, 'supported-report', `unsupported report ${root.localName}`);
 }

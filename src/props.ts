@@ -1,4 +1,4 @@
-import {type Context, quoteEtag, type Resource, syncTokenUri} from './context.ts';
+import {type Context, homeSyncToken, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
 import type {Calendar} from './types.ts';
 import {cal, d, el, type Kid, NS, type QName, qkey, type XNode} from './xml.ts';
@@ -80,6 +80,7 @@ function def(ns: string, name: string, getter: Getter, inAllprop = true) {
 def(NS.DAV, 'resourcetype', (_ctx, r) => {
     switch (r.kind) {
         case 'root':
+        case 'principals':
         case 'home':
             return ok(d('collection'));
         case 'principal':
@@ -112,7 +113,8 @@ def(NS.DAV, 'displayname', (ctx, r) => {
 
 def(NS.DAV, 'current-user-principal', (ctx) => ok(href(ctx.principalHref())));
 def(NS.DAV, 'principal-URL', (ctx, r) => (r.kind === 'principal' ? ok(href(ctx.principalHref())) : undefined));
-def(NS.DAV, 'owner', (ctx, r) => (r.kind === 'root' ? undefined : ok(href(ctx.principalHref()))));
+def(NS.DAV, 'owner', (ctx, r) => (r.kind === 'root' || r.kind === 'principals' ? undefined : ok(href(ctx.principalHref()))));
+def(NS.DAV, 'principal-collection-set', (ctx) => ok(href(ctx.principalsHref())));
 def(NS.DAV, 'current-user-privilege-set', (ctx, r) => privilegeSet(ctx, r));
 
 def(NS.DAV, 'supported-report-set', (ctx, r) => {
@@ -122,14 +124,19 @@ def(NS.DAV, 'supported-report-set', (ctx, r) => {
             return ok(report(NS.CALDAV, 'calendar-query'), report(NS.CALDAV, 'calendar-multiget'), report(NS.DAV, 'sync-collection'));
         case 'inbox':
             return ok(report(NS.CALDAV, 'calendar-query'), report(NS.CALDAV, 'calendar-multiget'));
+        case 'home':
+            return ok(report(NS.DAV, 'sync-collection'));
         case 'principal':
             return ok(report(NS.DAV, 'expand-property'));
+        case 'principals':
+            return ok(report(NS.DAV, 'principal-property-search'), report(NS.DAV, 'principal-search-property-set'));
         default:
             return ok();
     }
 });
 
-def(NS.DAV, 'sync-token', (_ctx, r) => {
+def(NS.DAV, 'sync-token', async (ctx, r) => {
+    if (r.kind === 'home') return ok(syncTokenUri(homeSyncToken(await ctx.calendars())));
     const c = calendarOf(r);
     return c ? ok(syncTokenUri(c.syncToken)) : undefined;
 });

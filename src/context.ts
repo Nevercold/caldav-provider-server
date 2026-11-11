@@ -3,6 +3,7 @@ import type {Calendar, CalDavProvider, CalendarObject, Principal} from './types.
 
 export type Resource =
     | {kind: 'root'}
+    | {kind: 'principals'}
     | {kind: 'principal'}
     | {kind: 'home'}
     | {kind: 'calendar'; calendar: Calendar}
@@ -20,6 +21,26 @@ export function parseSyncTokenUri(uri: string): string | null {
     if (!uri.startsWith(SYNC_PREFIX)) return null;
     try {
         return decodeURIComponent(uri.slice(SYNC_PREFIX.length));
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Sync token of the calendar home: the ids and tokens of all calendars, so a
+ * later sync-collection can tell which calendars changed or disappeared
+ * without any state on the server.
+ */
+export function homeSyncToken(calendars: Calendar[]): string {
+    const map = Object.fromEntries(calendars.map((c) => [c.id, c.syncToken]));
+    return `home:${Buffer.from(JSON.stringify(map)).toString('base64url')}`;
+}
+
+export function parseHomeSyncToken(token: string): Record<string, string> | null {
+    if (!token.startsWith('home:')) return null;
+    try {
+        const map = JSON.parse(Buffer.from(token.slice(5), 'base64url').toString('utf8'));
+        return map && typeof map === 'object' && !Array.isArray(map) ? (map as Record<string, string>) : null;
     } catch {
         return null;
     }
@@ -76,6 +97,10 @@ export class Context<P extends Principal = Principal> {
         return `${this.base}/`;
     }
 
+    principalsHref(): string {
+        return `${this.base}/principals/`;
+    }
+
     principalHref(): string {
         return `${this.base}/principals/${this.seg(this.principal.id)}/`;
     }
@@ -104,6 +129,8 @@ export class Context<P extends Principal = Principal> {
         switch (r.kind) {
             case 'root':
                 return this.rootHref();
+            case 'principals':
+                return this.principalsHref();
             case 'principal':
                 return this.principalHref();
             case 'home':
@@ -146,7 +173,10 @@ export class Context<P extends Principal = Principal> {
         const [area, owner, ...rest] = segs;
         if (!area) return {kind: 'root'};
         if (!['principals', 'calendars', 'inbox', 'outbox'].includes(area)) throw CalDavError.notFound();
-        if (owner === undefined) throw CalDavError.notFound();
+        if (owner === undefined) {
+            if (area === 'principals') return {kind: 'principals'};
+            throw CalDavError.notFound();
+        }
         if (owner !== this.principal.id) throw CalDavError.forbidden('resource of another principal');
 
         if (area === 'principals') {

@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="UTF-8"?><CAL:calendar-query xmlns="DAV:" xmlns:CAL="urn:ietf:params:xml:ns:caldav"><prop><getetag /></prop><CAL:filter><CAL:comp-filter name="VCALENDAR"><CAL:comp-filter name="VEVENT" /></CAL:comp-filter></CAL:filter></CAL:calendar-query>

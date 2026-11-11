@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="UTF-8"?><propfind xmlns="DAV:" xmlns:CAL="urn:ietf:params:xml:ns:caldav" xmlns:CARD="urn:ietf:params:xml:ns:carddav"><prop><supported-report-set /><sync-token /><n1:getctag xmlns:n1="http://calendarserver.org/ns/" /><CAL:max-resource-size /><CARD:max-resource-size /><CARD:supported-address-data /></prop></propfind>

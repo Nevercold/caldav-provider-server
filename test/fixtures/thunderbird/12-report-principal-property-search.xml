@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<D:principal-property-search xmlns:D='DAV:' xmlns:C='urn:ietf:params:xml:ns:caldav'><D:property-search><D:prop><C:calendar-home-set/></D:prop><D:match>/calendars/user</D:match></D:property-search><D:prop><C:calendar-home-set/><C:calendar-user-address-set/><C:schedule-inbox-URL/><C:schedule-outbox-URL/></D:prop></D:principal-property-search>

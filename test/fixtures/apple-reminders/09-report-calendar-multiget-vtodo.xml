@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<G:calendar-multiget xmlns:G="urn:ietf:params:xml:ns:caldav">
+  <A:prop xmlns:A="DAV:">
+    <A:getetag/>
+    <G:calendar-data/>
+    <G:schedule-tag/>
+  </A:prop>
+  <A:href xmlns:A="DAV:">/calendars/user/tasks/task1.ics</A:href>
+  <A:href xmlns:A="DAV:">/calendars/user/tasks/task2.ics</A:href>
+
+</G:calendar-multiget>

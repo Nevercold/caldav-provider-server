@@ -1,8 +1,20 @@
 import {MemoryProvider} from '../example/memory-provider.ts';
-import {createCalDavHandler, type CalDavResponse} from '../src/index.ts';
+import {type CalDavHandler, createCalDavHandler, type CalDavResponse} from '../src/index.ts';
 import {parseXml, type XmlElement} from '../src/xml.ts';
 
-export function setup(options: {scheduling?: boolean} = {}) {
+export type Request = (
+    method: string,
+    url: string,
+    init?: {user?: string | null; body?: string; headers?: Record<string, string>},
+) => Promise<CalDavResponse>;
+
+export interface Setup {
+    provider: MemoryProvider;
+    handle: CalDavHandler;
+    request: Request;
+}
+
+export function setup(options: {scheduling?: boolean} = {}): Setup {
     const provider = new MemoryProvider()
         .addUser({id: 'alice', username: 'alice', password: 'pw', displayName: 'Alice', addresses: ['alice@example.com']})
         .addUser({id: 'bob', username: 'bob', password: 'pw', displayName: 'Bob', addresses: ['mailto:bob@example.com']})
@@ -90,5 +102,5 @@ export function ics(kind: 'VEVENT' | 'VTODO', uid: string, ...props: string[]): 
     ].join('\r\n');
 }
 
-export const PROPFIND = (props: string) =>
+export const PROPFIND = (props: string): string =>
     `<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:a="http://apple.com/ns/ical/"><d:prop>${props}</d:prop></d:propfind>`;

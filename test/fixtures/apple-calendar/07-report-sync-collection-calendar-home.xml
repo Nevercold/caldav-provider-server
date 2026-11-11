@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<A:sync-collection xmlns:A="DAV:">
+  <A:sync-token>http://example.com/ns/sync/1234</A:sync-token>
+  <A:sync-level>1</A:sync-level>
+  <A:prop>
+    <A:sync-token/>
+    <A:resourcetype/>
+    <A:displayname/>
+    <B:calendar-free-busy-set xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <B:default-alarm-vevent-date xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <C:allowed-sharing-modes xmlns:C="http://calendarserver.org/ns/"/>
+    <B:calendar-alarm xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <B:calendar-timezone xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <C:push-transports xmlns:C="http://calendarserver.org/ns/"/>
+    <B:supported-calendar-component-set xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <C:subscribed-strip-attachments xmlns:C="http://calendarserver.org/ns/"/>
+    <A:quota-available-bytes/>
+    <B:default-alarm-vevent-datetime xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <A:quota-used-bytes/>
+    <E:location-code xmlns:E="http://apple.com/ns/ical/"/>
+    <A:resource-id/>
+    <C:getctag xmlns:C="http://calendarserver.org/ns/"/>
+    <E:calendar-color xmlns:E="http://apple.com/ns/ical/"/>
+    <C:source xmlns:C="http://calendarserver.org/ns/"/>
+    <E:autoprovisioned xmlns:E="http://apple.com/ns/ical/"/>
+    <A:current-user-privilege-set/>
+    <C:pre-publish-url xmlns:C="http://calendarserver.org/ns/"/>
+    <B:schedule-default-calendar-URL xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <B:schedule-calendar-transp xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <B:supported-calendar-component-sets xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <D:bulk-requests xmlns:D="http://me.com/_namespace/"/>
+    <E:calendar-order xmlns:E="http://apple.com/ns/ical/"/>
+    <E:refreshrate xmlns:E="http://apple.com/ns/ical/"/>
+    <C:subscribed-strip-todos xmlns:C="http://calendarserver.org/ns/"/>
+    <B:calendar-description xmlns:B="urn:ietf:params:xml:ns:caldav"/>
+    <E:language-code xmlns:E="http://apple.com/ns/ical/"/>
+    <C:publish-url xmlns:C="http://calendarserver.org/ns/"/>
+    <C:pushkey xmlns:C="http://calendarserver.org/ns/"/>
+    <A:owner/>
+    <A:supported-report-set/>
+    <A:add-member/>
+    <C:subscribed-strip-alarms xmlns:C="http://calendarserver.org/ns/"/>
+    <C:invite xmlns:C="http://calendarserver.org/ns/"/>
+  </A:prop>
+</A:sync-collection>

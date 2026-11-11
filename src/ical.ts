@@ -97,10 +97,10 @@ function intlOffset(fmt: Intl.DateTimeFormat, utcMs: number): number {
 export class TimeResolver {
     private readonly zones = new Map<string, Timezone>();
 
-    constructor(
-        vcal: Component,
-        private readonly floatingZone?: string,
-    ) {
+    private readonly floatingZone?: string;
+
+    constructor(vcal: Component, floatingZone?: string) {
+        this.floatingZone = floatingZone;
         for (const tz of vcal.getAllSubcomponents('vtimezone')) {
             const zone = new ICAL.Timezone(tz);
             if (zone.tzid) this.zones.set(zone.tzid, zone);

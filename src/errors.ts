@@ -6,13 +6,14 @@ import {NS, type QName} from './xml.ts';
  * `<D:error><precondition/></D:error>` (RFC 4918 16).
  */
 export class CalDavError extends Error {
-    constructor(
-        readonly status: number,
-        message?: string,
-        readonly precondition?: QName,
-    ) {
+    readonly status: number;
+    readonly precondition?: QName;
+
+    constructor(status: number, message?: string, precondition?: QName) {
         super(message ?? `HTTP ${status}`);
         this.name = 'CalDavError';
+        this.status = status;
+        this.precondition = precondition;
     }
 
     static forbidden(message?: string): CalDavError {

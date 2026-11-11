@@ -1,0 +1,183 @@
+import {
+    CalDavError,
+    type CalDavProvider,
+    type Calendar,
+    type CalendarObject,
+    type Changes,
+    type ComponentType,
+    type Principal,
+    processSchedulingMessage,
+    type PutObjectResult,
+    type ScheduleStatus,
+    type SchedulingProvider,
+} from '../src/index.ts';
+
+export interface User extends Principal {
+    username: string;
+    password: string;
+}
+
+interface StoredCalendar {
+    meta: Omit<Calendar, 'syncToken' | 'readOnly'>;
+    objects: Map<string, CalendarObject>;
+    /** Change log: version of the change, object name, deleted? */
+    log: {version: number; name: string; deleted: boolean}[];
+    members: Map<string, {readOnly: boolean}>;
+}
+
+/**
+ * Keeps everything in memory. Calendars can be shared between users, read-only
+ * or writable per user. Scheduling messages for local users are processed
+ * into their calendars; other recipients are only logged.
+ */
+export class MemoryProvider implements CalDavProvider<User> {
+    private readonly users = new Map<string, User>();
+    private readonly calendars = new Map<string, StoredCalendar>();
+    private version = 0;
+
+    /** Every delivered iTIP message, for tests and for the console. */
+    readonly outbox: {method: string; recipients: string[]; ics: string}[] = [];
+
+    addUser(user: User): this {
+        this.users.set(user.id, user);
+        return this;
+    }
+
+    addCalendar(
+        meta: {id: string; displayName: string; components: ComponentType[]; color?: string; description?: string; order?: number},
+        members: Record<string, 'read' | 'write'>,
+    ): this {
+        this.calendars.set(meta.id, {
+            meta,
+            objects: new Map(),
+            log: [],
+            members: new Map(Object.entries(members).map(([id, access]) => [id, {readOnly: access === 'read'}])),
+        });
+        return this;
+    }
+
+    /** Stores an object directly, like a backend would when data changes in its own UI. */
+    seed(calendarId: string, name: string, ics: string): CalendarObject {
+        const cal = this.calendars.get(calendarId);
+        if (!cal) throw new Error(`unknown calendar ${calendarId}`);
+        return this.write(cal, name, ics);
+    }
+
+    private write(cal: StoredCalendar, name: string, ics: string): CalendarObject {
+        const version = ++this.version;
+        const object = {name, ics, etag: `v${version}`, lastModified: new Date()};
+        cal.objects.set(name, object);
+        cal.log.push({version, name, deleted: false});
+        return object;
+    }
+
+    private stored(principal: User, calendar: Calendar): StoredCalendar {
+        const cal = this.calendars.get(calendar.id);
+        if (!cal || !cal.members.has(principal.id)) throw CalDavError.notFound();
+        return cal;
+    }
+
+    private toCalendar(cal: StoredCalendar, userId: string): Calendar {
+        const version = cal.log.at(-1)?.version ?? 0;
+        return {...cal.meta, syncToken: String(version), readOnly: cal.members.get(userId)!.readOnly};
+    }
+
+    async authenticate(username: string, password: string): Promise<User | null> {
+        const user = [...this.users.values()].find((u) => u.username === username);
+        return user && user.password === password ? user : null;
+    }
+
+    async listCalendars(principal: User): Promise<Calendar[]> {
+        return [...this.calendars.values()].filter((c) => c.members.has(principal.id)).map((c) => this.toCalendar(c, principal.id));
+    }
+
+    async listObjects(principal: User, calendar: Calendar): Promise<CalendarObject[]> {
+        // The query hint is ignored; the server filters exactly anyway.
+        return [...this.stored(principal, calendar).objects.values()];
+    }
+
+    async getObject(principal: User, calendar: Calendar, name: string): Promise<CalendarObject | null> {
+        return this.stored(principal, calendar).objects.get(name) ?? null;
+    }
+
+    async changesSince(principal: User, calendar: Calendar, syncToken: string): Promise<Changes | null> {
+        const cal = this.stored(principal, calendar);
+        const since = Number(syncToken);
+        const current = cal.log.at(-1)?.version ?? 0;
+        if (!Number.isInteger(since) || since < 0 || since > current) return null;
+        const touched = new Set(cal.log.filter((e) => e.version > since).map((e) => e.name));
+        const changed: CalendarObject[] = [];
+        const deleted: string[] = [];
+        for (const name of touched) {
+            const o = cal.objects.get(name);
+            if (o) changed.push(o);
+            else deleted.push(name);
+        }
+        return {syncToken: String(current), changed, deleted};
+    }
+
+    async putObject(principal: User, calendar: Calendar, input: {name: string; ics: string; ifMatch?: string}): Promise<PutObjectResult> {
+        const cal = this.stored(principal, calendar);
+        if (cal.members.get(principal.id)!.readOnly) throw CalDavError.forbidden();
+        const current = cal.objects.get(input.name);
+        if (input.ifMatch && current?.etag !== input.ifMatch) throw CalDavError.preconditionFailed();
+        const object = this.write(cal, input.name, input.ics);
+        return {etag: object.etag, storedAsIs: true};
+    }
+
+    async deleteObject(principal: User, calendar: Calendar, input: {name: string; ifMatch?: string}): Promise<void> {
+        const cal = this.stored(principal, calendar);
+        if (cal.members.get(principal.id)!.readOnly) throw CalDavError.forbidden();
+        const current = cal.objects.get(input.name);
+        if (!current) throw CalDavError.notFound();
+        if (input.ifMatch && current.etag !== input.ifMatch) throw CalDavError.preconditionFailed();
+        cal.objects.delete(input.name);
+        cal.log.push({version: ++this.version, name: input.name, deleted: true});
+    }
+
+    private userByAddress(address: string): User | undefined {
+        const mail = address.replace(/^mailto:/i, '').toLowerCase();
+        return [...this.users.values()].find((u) => u.addresses?.some((a) => a.replace(/^mailto:/i, '').toLowerCase() === mail));
+    }
+
+    /** Finds the object with the UID in the user's writable calendars. */
+    private findByUid(user: User, uid: string): {cal: StoredCalendar; object: CalendarObject} | undefined {
+        for (const cal of this.calendars.values()) {
+            if (!cal.members.has(user.id)) continue;
+            for (const object of cal.objects.values()) {
+                if (object.ics.includes(`UID:${uid}`)) return {cal, object};
+            }
+        }
+        return undefined;
+    }
+
+    readonly scheduling: SchedulingProvider<User> = {
+        deliver: async (message) => {
+            this.outbox.push({method: message.method, recipients: message.recipients, ics: message.ics});
+            const result: Record<string, ScheduleStatus> = {};
+            for (const recipient of message.recipients) {
+                const user = this.userByAddress(recipient);
+                if (!user) {
+                    // A real backend would send an iMIP e-mail here.
+                    result[recipient] = '3.7';
+                    continue;
+                }
+                const found = this.findByUid(user, message.uid);
+                const processed = processSchedulingMessage(message.ics, found?.object.ics ?? null, recipient);
+                if (processed.ics) {
+                    const target =
+                        found?.cal ??
+                        [...this.calendars.values()].find((c) => c.members.get(user.id)?.readOnly === false && c.meta.components.includes('VEVENT'));
+                    if (!target) {
+                        result[recipient] = '5.3';
+                        continue;
+                    }
+                    this.write(target, found?.object.name ?? `${message.uid}.ics`, processed.ics);
+                }
+                result[recipient] = '1.2';
+            }
+            return result;
+        },
+        findPrincipal: async (address) => this.userByAddress(address) ?? null,
+    };
+}

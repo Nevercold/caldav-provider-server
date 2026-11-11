@@ -32,11 +32,15 @@ export const unquoteEtag = (etag: string): string => etag.replace(/^W\//, '').re
 export class Context<P extends Principal = Principal> {
     private calendarsPromise?: Promise<Calendar[]>;
 
-    constructor(
-        readonly provider: CalDavProvider<P>,
-        readonly base: string,
-        readonly principal: P,
-    ) {}
+    readonly provider: CalDavProvider<P>;
+    readonly base: string;
+    readonly principal: P;
+
+    constructor(provider: CalDavProvider<P>, base: string, principal: P) {
+        this.provider = provider;
+        this.base = base;
+        this.principal = principal;
+    }
 
     get scheduling(): boolean {
         return !!this.provider.scheduling;

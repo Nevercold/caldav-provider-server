@@ -32,12 +32,12 @@ export interface CompFilter {
 }
 
 export class FilterError extends Error {
-    constructor(
-        message: string,
-        /** CalDAV precondition to report, e.g. supported-collation. */
-        readonly precondition = 'valid-filter',
-    ) {
+    /** CalDAV precondition to report, e.g. supported-collation. */
+    readonly precondition: string;
+
+    constructor(message: string, precondition = 'valid-filter') {
         super(message);
+        this.precondition = precondition;
     }
 }
 
@@ -148,7 +148,11 @@ function propText(prop: Property): string {
 }
 
 class Evaluator {
-    constructor(private readonly tr: TimeResolver) {}
+    private readonly tr: TimeResolver;
+
+    constructor(tr: TimeResolver) {
+        this.tr = tr;
+    }
 
     /** Does `parent` contain a component satisfying the filter? */
     comp(f: CompFilter, parent: Component, parentSet: Component[]): boolean {

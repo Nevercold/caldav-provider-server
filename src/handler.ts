@@ -25,6 +25,11 @@ export interface CalDavOptions<P extends Principal = Principal> {
      * URLs (attachments). Default: `X-Forwarded-Proto` (or `http`) and the `Host` header.
      */
     origin?: string;
+    /**
+     * Largest calendar object in bytes a client may store (PUT), reported as max-resource-size.
+     * `Calendar.maxResourceSize` overrides it per calendar. Default: no limit.
+     */
+    maxObjectSize?: number;
     /** Called for unexpected errors (answered with 500). */
     onError?: (error: unknown, request: CalDavRequest) => void;
 }
@@ -208,6 +213,10 @@ async function put(ctx: Context, req: ParsedRequest, path: string): Promise<CalD
 
     const type = header(req, 'content-type');
     if (type && !/^text\/calendar\b/i.test(type)) throw CalDavError.caldav(415, 'supported-calendar-data');
+    const max = ctx.maxSizeOf(r.calendar);
+    if (max !== undefined && (req.bytes?.byteLength ?? 0) > max) {
+        throw CalDavError.caldav(403, 'max-resource-size', `objects are limited to ${max} bytes`);
+    }
 
     let vcal: Component;
     let info;
@@ -497,6 +506,7 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
             const ctx = await contextFor(provider, base, principal, path);
             const proto = header(req, 'x-forwarded-proto')?.split(',')[0]?.trim() || 'http';
             ctx.origin = (options.origin ?? `${proto}://${header(req, 'host') ?? 'localhost'}`).replace(/\/+$/, '');
+            ctx.maxObjectSize = options.maxObjectSize;
             if (provider.locks) await enforceLocks(ctx, req, method, path);
             let res: CalDavResponse;
             switch (method) {

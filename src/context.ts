@@ -75,6 +75,14 @@ export class Context<P extends Principal = Principal> {
     /** Scheme and host for absolute URLs, e.g. `https://cal.example.com` (attachment URLs). */
     origin = '';
 
+    /** Default size limit of calendar objects, see `CalDavOptions.maxObjectSize`. */
+    maxObjectSize?: number;
+
+    /** Size limit of objects in a calendar, if any. */
+    maxSizeOf(calendar: Calendar): number | undefined {
+        return calendar.maxResourceSize ?? this.maxObjectSize;
+    }
+
     /** The `calendar-data` a REPORT asked for, if it wants less than the full object. */
     calendarData?: CalendarDataRequest;
 

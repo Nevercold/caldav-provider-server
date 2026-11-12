@@ -313,6 +313,11 @@ def(
     false,
 );
 
+def(NS.CALDAV, 'max-resource-size', (ctx, r) => {
+    const max = r.kind === 'calendar' ? ctx.maxSizeOf(r.calendar) : undefined;
+    return max !== undefined ? ok(String(max)) : undefined;
+});
+
 // --- Locking (RFC 4918 15.8, 15.10), only with a lock provider ---
 
 def(NS.DAV, 'lockdiscovery', (ctx, r) => lockDiscovery(ctx, ctx.href(r)));

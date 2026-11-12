@@ -196,6 +196,10 @@ If you store exactly the ICS you got, return `storedAsIs: true` and the client k
 format and generate the ICS anew, leave it out: the client then fetches the object again
 ([RFC 4791 5.3.4](https://www.rfc-editor.org/rfc/rfc4791#section-5.3.4)), and properties you do not store are gone.
 
+Objects can be limited in size with the `maxObjectSize` option (bytes), or per calendar with `maxResourceSize`. Larger
+`PUT`s answer 403 `max-resource-size`, and clients see the limit as `max-resource-size` of the calendar. Inline
+attachments count, managed ones (below) don't.
+
 A calendar is read-only for a user if `readOnly` is set or `putObject` / `deleteObject` is missing. The server then
 answers `PUT`/`DELETE` with 403 and reports only read privileges, so clients show the calendar as read-only.
 
@@ -481,7 +485,6 @@ more properties; check a setup with the example server below, and `RECORD=…` t
   another user's URL is not covered by them
 - Publishing calendars (`CS:can-be-published`, webcal) and the WebDAV resource sharing draft (`share-resource`,
   draft-pot-webdav-resource-sharing); sharing follows CalendarServer's model that Apple Calendar uses
-- Inline attachments are stored as part of the object like any other property; there is no size check for them
 
 ## Example server
 

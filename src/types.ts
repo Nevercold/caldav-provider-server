@@ -42,6 +42,8 @@ export interface Calendar {
      * (schedule-calendar-transp, RFC 6638 9.1). Default false.
      */
     transparent?: boolean;
+    /** Largest object in bytes clients may store here (max-resource-size); overrides `maxObjectSize`. */
+    maxResourceSize?: number;
     /** The user's own calendar, shared with others (Apple shows it as shared). */
     shared?: boolean;
     /** Somebody else's calendar the user sees through a share. Can't be shared further. */

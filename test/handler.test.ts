@@ -205,6 +205,27 @@ describe('MOVE', () => {
     });
 });
 
+describe('object size limit', () => {
+    it('rejects objects above maxObjectSize and reports max-resource-size', async () => {
+        const provider = setup().provider;
+        const handle = createCalDavHandler({provider, maxObjectSize: 300});
+        const auth = {authorization: `Basic ${Buffer.from('alice:pw').toString('base64')}`};
+        const small = ics('VEVENT', 's', 'DTSTART:20260601T100000Z');
+        const big = ics('VEVENT', 'b', 'DTSTART:20260601T100000Z', `DESCRIPTION:${'x'.repeat(400)}`);
+        expect((await handle({method: 'PUT', url: '/dav/calendars/alice/personal/s.ics', headers: auth, body: small})).status).toBe(201);
+        const res = await handle({method: 'PUT', url: '/dav/calendars/alice/personal/b.ics', headers: auth, body: big});
+        expect(res.status).toBe(403);
+        expect(res.body).toContain('max-resource-size');
+        const p = await handle({
+            method: 'PROPFIND',
+            url: '/dav/calendars/alice/personal/',
+            headers: {...auth, depth: '0'},
+            body: PROPFIND('<c:max-resource-size/>'),
+        });
+        expect(props(p)['/dav/calendars/alice/personal/']!['max-resource-size']).toBe('300');
+    });
+});
+
 describe('COPY', () => {
     const EVENT = ics('VEVENT', 'c1', 'DTSTART:20260601T100000Z', 'SUMMARY:Copy me');
     const from = '/dav/calendars/alice/personal/c1.ics';

@@ -3,6 +3,7 @@ export {CALDAV_METHODS, createCalDavHandler, type CalDavHandler, type CalDavOpti
 export type {CalDavRequest, CalDavResponse} from './http.ts';
 export {processSchedulingMessage, type ProcessedMessage} from './itip.ts';
 export type {
+    BusyPeriod,
     CalDavProvider,
     Calendar,
     CalendarObject,

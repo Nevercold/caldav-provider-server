@@ -126,6 +126,14 @@ export interface SchedulingMessage<P extends Principal = Principal> {
  */
 export type ScheduleStatus = `${number}.${number}` | `${number}.${number}.${number}`;
 
+/** A busy time of a free-busy answer (RFC 5545 3.2.9 FBTYPE). */
+export interface BusyPeriod {
+    start: Date;
+    end: Date;
+    /** Default `BUSY`. */
+    type?: 'BUSY' | 'BUSY-TENTATIVE' | 'BUSY-UNAVAILABLE';
+}
+
 export interface SchedulingProvider<P extends Principal = Principal> {
     /**
      * Deliver an iTIP message: put it into the calendars of local users
@@ -138,6 +146,14 @@ export interface SchedulingProvider<P extends Principal = Principal> {
      * free-busy lookups. Without it, free-busy only answers with `3.7`.
      */
     findPrincipal?(address: string): Promise<P | null>;
+    /**
+     * Busy times of a calendar user for a free-busy lookup by `requester`
+     * (RFC 6638 5), e.g. from your own availability data. Return null if the
+     * address is unknown or not visible to the requester (answered `3.7`).
+     * `maskUid` is the event being planned, to leave out. Takes precedence
+     * over `findPrincipal`, which reads the user's calendars instead.
+     */
+    freeBusy?(requester: P, address: string, range: {start: Date; end: Date}, maskUid?: string): Promise<BusyPeriod[] | null>;
     /** Items of the scheduling inbox. Without it, the inbox is empty. */
     listInbox?(principal: P): Promise<CalendarObject[]>;
     deleteInboxItem?(principal: P, name: string): Promise<void>;

@@ -249,6 +249,18 @@ Status codes per recipient: `1.1` sent (e.g. by mail), `1.2` delivered, `3.7` un
 `5.3` the user cannot receive invitations. Free-busy answers for every user that `findPrincipal` returns; return `null`
 for users whose availability others must not see.
 
+If your availability data lives elsewhere (absences, working hours) or depends on who asks, implement `freeBusy`
+instead. It takes precedence over `findPrincipal`:
+
+```ts
+async freeBusy(requester, address, {start, end}, maskUid) {
+    if (!sharesATeam(requester, address)) return null; // answered 3.7
+    return (await busyTimes(address, start, end, maskUid)).map(b => ({start: b.from, end: b.to, type: b.maybe ? 'BUSY-TENTATIVE' : 'BUSY'}));
+},
+```
+
+Periods are clipped to the asked range; `maskUid` is the event being planned (Apple's `X-CALENDARSERVER-MASK-UID`).
+
 Scheduling inbox: Clients get messages through the server's automatic processing, not through the inbox, so the inbox
 is empty unless you implement `listInbox` / `deleteInboxItem`.
 

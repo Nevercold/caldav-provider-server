@@ -292,9 +292,21 @@ const icsUtc = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').r
 
 async function freeBusyFor(ctx: Context, address: string, range: Range, maskUid: string | undefined): Promise<string | null> {
     const s = ctx.provider.scheduling!;
+    const periods: {start: number; end: number; type: string}[] = [];
+    if (s.freeBusy) {
+        const busy = await s.freeBusy(ctx.principal, address, {start: new Date(range.start), end: new Date(range.end)}, maskUid);
+        if (!busy) return null;
+        for (const period of busy) {
+            // Clipped to the asked range (RFC 5545 3.6.4), empty ones dropped.
+            const start = Math.max(period.start.getTime(), range.start);
+            const end = Math.min(period.end.getTime(), range.end);
+            if (end > start) periods.push({start, end, type: period.type ?? 'BUSY'});
+        }
+        periods.sort((a, b) => a.start - b.start);
+        return periods.map((p) => `FREEBUSY;FBTYPE=${p.type}:${icsUtc(p.start)}/${icsUtc(p.end)}`).join('\r\n');
+    }
     const principal = s.findPrincipal ? await s.findPrincipal(address) : null;
     if (!principal) return null;
-    const periods: {start: number; end: number; type: string}[] = [];
     const query = {componentType: 'VEVENT' as const, timeRange: {start: new Date(range.start), end: new Date(range.end)}};
     for (const calendar of await ctx.provider.listCalendars(principal)) {
         if (!calendar.components.includes('VEVENT')) continue;

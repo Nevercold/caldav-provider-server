@@ -182,6 +182,36 @@ describe('scheduling collections', () => {
         expect(res.body).toContain('3.7;Invalid calendar user');
     });
 
+    it('free-busy from the provider when it has freeBusy', async () => {
+        const {provider, request} = setup();
+        const asked: unknown[] = [];
+        provider.scheduling!.freeBusy = async (requester, address, range, maskUid) => {
+            asked.push([requester.id, address, range.start.toISOString(), maskUid]);
+            if (address !== 'mailto:bob@example.com') return null;
+            return [
+                {start: new Date('2026-03-09T22:00:00Z'), end: new Date('2026-03-10T01:00:00Z')},
+                {start: new Date('2026-03-10T14:00:00Z'), end: new Date('2026-03-10T15:00:00Z'), type: 'BUSY-TENTATIVE'},
+                {start: new Date('2026-03-12T10:00:00Z'), end: new Date('2026-03-12T11:00:00Z')},
+            ];
+        };
+        const body = [
+            'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//test//EN', 'METHOD:REQUEST', 'BEGIN:VFREEBUSY', 'UID:fb2',
+            'DTSTAMP:20260301T000000Z', 'DTSTART:20260310T000000Z', 'DTEND:20260311T000000Z',
+            'ORGANIZER:mailto:alice@example.com', 'ATTENDEE:mailto:bob@example.com', 'ATTENDEE:mailto:nobody@example.com',
+            'X-CALENDARSERVER-MASK-UID:m1', 'END:VFREEBUSY', 'END:VCALENDAR',
+        ].join('\r\n');
+        const res = await request('POST', '/dav/outbox/alice/', {
+            body,
+            headers: {'content-type': 'text/calendar', originator: 'mailto:alice@example.com', recipient: 'mailto:bob@example.com, mailto:nobody@example.com'},
+        });
+        expect(res.status).toBe(200);
+        expect(asked[0]).toEqual(['alice', 'mailto:bob@example.com', '2026-03-10T00:00:00.000Z', 'm1']);
+        expect(res.body).toContain('FREEBUSY;FBTYPE=BUSY:20260310T000000Z/20260310T010000Z');
+        expect(res.body).toContain('FREEBUSY;FBTYPE=BUSY-TENTATIVE:20260310T140000Z/20260310T150000Z');
+        expect(res.body).not.toContain('20260312');
+        expect(res.body).toContain('3.7;Invalid calendar user');
+    });
+
     it('refuses a foreign Originator', async () => {
         const {request} = setup();
         const res = await request('POST', '/dav/outbox/alice/', {

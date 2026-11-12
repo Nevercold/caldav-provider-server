@@ -437,11 +437,17 @@ const publishing: PublishingProvider<User> = {
     async publish(user, calendar) {
         return feeds.create(calendar.id); // e.g. 'webcal://feeds.example.com/<signed token>.ics'
     },
+    async previewUrl(user, calendar) {
+        return feeds.urlFor(calendar.id); // optional: the URL it would get, shown before publishing
+    },
     async unpublish(user, calendar) {}, // optional; without it, switching off is accepted and nothing happens
 };
 ```
 
-Calendars then offer `can-be-published` and report `CS:publish-url`. Read-only calendars and calendars shared with
+Calendars then offer `can-be-published` and report `CS:publish-url` (when published) and `CS:pre-publish-url`
+(the published URL, else `previewUrl`). Apple Calendar shows `pre-publish-url` as the calendar's public URL, so
+return it: without it Apple shows "null". Publishing answers 202 like iCloud; the client then reads the URL with
+`PROPFIND`. Change the calendar's `syncToken` when it is published or unpublished, so other devices notice. Read-only calendars and calendars shared with
 the user can't be published. Optionally the server serves the feed itself, without login, at
 `<basePath>/public/<token>` (`.ics` may be appended): implement `resolveFeed(token)` returning the owner and the
 calendar, and return such URLs from `publish`. The feed is one VCALENDAR with all objects, their time zones and

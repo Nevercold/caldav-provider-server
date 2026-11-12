@@ -389,6 +389,16 @@ def(NS.CS, 'publish-url', async (ctx, r) => {
     return url ? ok(href(url)) : undefined;
 });
 
+// iCloud reports it for every calendar, published or not; Apple Calendar shows it as the public URL.
+def(NS.CS, 'pre-publish-url', async (ctx, r) => {
+    const publishing = ctx.provider.publishing;
+    if (r.kind !== 'calendar' || !publishing) return undefined;
+    const url =
+        (await publishing.publishedUrl(ctx.principal, r.calendar)) ??
+        (publishing.previewUrl ? await publishing.previewUrl(ctx.principal, r.calendar) : null);
+    return url ? ok(href(url)) : undefined;
+});
+
 // Draft sharing (draft-pot-webdav-resource-sharing), owner side.
 def(NS.DAV, 'share-access', (ctx, r) => shareAccessProperty(ctx, r), false);
 def(NS.DAV, 'invite', (ctx, r) => draftInviteProperty(ctx, r), false);

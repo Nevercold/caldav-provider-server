@@ -311,6 +311,11 @@ export interface PublishingProvider<P extends Principal = Principal> {
     publishedUrl(principal: P, calendar: Calendar): Promise<string | null>;
     /** Publish and return the public URL (absolute, e.g. `webcal://…` or `https://…`). */
     publish(principal: P, calendar: Calendar): Promise<string>;
+    /**
+     * The URL the calendar would get when published (CS:pre-publish-url, which Apple shows in the
+     * "Public Calendar" setting and reads for every calendar). Defaults to `publishedUrl`.
+     */
+    previewUrl?(principal: P, calendar: Calendar): Promise<string | null>;
     /** Stop publishing. Without it, unpublishing is accepted and nothing happens (the URL stays valid). */
     unpublish?(principal: P, calendar: Calendar): Promise<void>;
     /**

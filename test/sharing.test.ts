@@ -56,9 +56,11 @@ describe('sharing and publishing', () => {
         const {request} = setup();
         await request('PUT', `${CAL}a.ics`, {body: ics('VEVENT', 'a', 'DTSTART:20260601T100000Z', 'SUMMARY:Public')});
         await request('PUT', `${CAL}b.ics`, {body: ics('VEVENT', 'b', 'DTSTART:20260602T100000Z')});
-        expect((await request('POST', CAL, {body: publish})).status).toBe(200);
-        const url = props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:publish-url/>')}))[CAL]!['publish-url']!;
+        expect((await request('POST', CAL, {body: publish})).status).toBe(202);
+        const published = props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:publish-url/><cs:pre-publish-url/>')}))[CAL]!;
+        const url = published['publish-url']!;
         expect(url).toMatch(/^href\(http:\/\/localhost:5232\/dav\/public\/[0-9a-f-]+\.ics\)$/);
+        expect(published['pre-publish-url']).toBe(url);
 
         const path = /\/dav\/public\/[^)]+/.exec(url)![0];
         const feed = await request('GET', path, {user: null});
@@ -83,13 +85,22 @@ describe('sharing and publishing', () => {
                 },
             },
         });
-        expect((await request('POST', CAL, {body: publish})).status).toBe(200);
+        expect((await request('POST', CAL, {body: publish})).status).toBe(202);
         expect((await request('POST', CAL, {body: unpublish})).status).toBe(200);
         expect(calls).toEqual(['publish']);
         expect(props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:publish-url/>')}))[CAL]!['publish-url']).toBe(
             'href(webcal://feeds.example.com/abc.ics)',
         );
         expect((await request('GET', '/dav/public/abc', {user: null})).status).toBe(401);
+    });
+
+    it('pre-publish-url before publishing, as iCloud reports it', async () => {
+        const {request, provider} = setup();
+        const p = () => request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:pre-publish-url/><cs:publish-url/>')});
+        // Not published and no previewUrl: no pre-publish-url.
+        expect(props(await p())[CAL]!['pre-publish-url']).toBeUndefined();
+        Object.assign(provider.publishing, {previewUrl: async () => 'webcal://feeds.example.com/personal.ics'});
+        expect(props(await p())[CAL]).toEqual({'pre-publish-url': 'href(webcal://feeds.example.com/personal.ics)'});
     });
 
     it('read-only members and sharees cannot publish', async () => {

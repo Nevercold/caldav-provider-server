@@ -175,7 +175,8 @@ export async function handlePublish(ctx: Context, r: Extract<Resource, {kind: 'c
     }
     if (publish) await publishing.publish(ctx.principal, r.calendar);
     else await publishing.unpublish?.(ctx.principal, r.calendar);
-    return {status: 200, headers: {}};
+    // iCloud answers publishing with 202 and no body; the client reads the URL with PROPFIND.
+    return {status: publish ? 202 : 200, headers: {}};
 }
 
 /** All objects of a calendar as one VCALENDAR (for a public feed). */

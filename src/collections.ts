@@ -87,6 +87,7 @@ export async function proppatchCollection(ctx: Context, req: CalDavRequest, targ
     const root = parseBody(req);
     if (!is(root, NS.DAV, 'propertyupdate')) throw new CalDavError(400, 'expected DAV:propertyupdate');
     const ops = operations(root!);
+    if (target.kind === 'proxy-group') return proppatchProxyGroup(ctx, target, ops);
     const editable = target.kind === 'calendar' && ctx.canEditCalendar(target.calendar);
 
     const changes: CalendarChanges = {};
@@ -105,6 +106,42 @@ export async function proppatchCollection(ctx: Context, req: CalDavRequest, targ
     } else if (results.length && target.kind === 'calendar') {
         try {
             await ctx.provider.updateCalendar!(ctx.principal, target.calendar, changes);
+        } catch (e) {
+            if (!(e instanceof CalDavError)) throw e;
+            for (const r of results) r.status = e.status;
+        }
+    }
+    return multistatus([d('response', d('href', ctx.href(target)), ...propstats(results))]);
+}
+
+/**
+ * PROPPATCH of group-member-set on the principal's own proxy group: the client changes its
+ * delegates. Only that property, through `setDelegates`.
+ */
+async function proppatchProxyGroup(
+    ctx: Context,
+    target: Extract<Resource, {kind: 'proxy-group'}>,
+    ops: {prop: XmlElement; remove: boolean}[],
+): Promise<CalDavResponse> {
+    const editable = !!ctx.provider.setDelegates && !ctx.delegated;
+    let ids: string[] | undefined;
+    const results = ops.map(({prop, remove}) => {
+        const q = qnameOf(prop);
+        if (!editable || !is(prop, NS.DAV, 'group-member-set')) return {q, status: 403};
+        const list: string[] = [];
+        for (const h of remove ? [] : children(prop).filter((c) => is(c, NS.DAV, 'href'))) {
+            const segs = ctx.segments(ctx.pathOfHref(textOf(h)));
+            if (!segs || segs[0] !== 'principals' || segs.length !== 2 || segs[1] === ctx.principal.id) return {q, status: 409};
+            list.push(segs[1]!);
+        }
+        ids = [...new Set(list)];
+        return {q, status: 200};
+    });
+    if (results.some((r) => r.status !== 200)) {
+        for (const r of results) if (r.status === 200) r.status = 424;
+    } else if (ids) {
+        try {
+            await ctx.provider.setDelegates!(ctx.principal, target.write, ids);
         } catch (e) {
             if (!(e instanceof CalDavError)) throw e;
             for (const r of results) r.status = e.status;
@@ -173,7 +210,7 @@ export async function mkcalendar(ctx: Context, req: CalDavRequest, path: string,
     }
     const [, owner, id] = segs as [string, string, string];
     if (owner !== ctx.principal.id) throw CalDavError.forbidden('resource of another principal');
-    if (!ctx.provider.createCalendar) throw CalDavError.forbidden('creating calendars is not supported');
+    if (!ctx.provider.createCalendar || !ctx.writable) throw CalDavError.forbidden('creating calendars is not allowed');
     if (!id.trim() || id.includes('/')) throw new CalDavError(400, 'invalid calendar id');
     if (await ctx.calendar(id)) throw CalDavError.dav(405, 'resource-must-be-null', 'the calendar exists');
 
@@ -195,7 +232,7 @@ export async function mkcalendar(ctx: Context, req: CalDavRequest, path: string,
 /** DELETE of a whole calendar. */
 export async function deleteCalendar(ctx: Context, target: Extract<Resource, {kind: 'calendar'}>): Promise<CalDavResponse> {
     if (!ctx.provider.deleteCalendar) throw CalDavError.forbidden('deleting calendars is not supported');
-    if (target.calendar.readOnly) throw CalDavError.forbidden('calendar is read-only');
+    if (target.calendar.readOnly || !ctx.writable) throw CalDavError.forbidden('calendar is read-only');
     await ctx.provider.deleteCalendar(ctx.principal, target.calendar);
     return {status: 204, headers: {}};
 }

@@ -121,6 +121,8 @@ becomes a 500 and is passed to `onError`.
 | `scheduling`                                | no       | enables RFC 6638, see below                                     |
 | `searchPrincipals(principal, query)`        | no       | other users to find, e.g. to invite them, see below             |
 | `getPrincipal(principal, id)`               | no       | another user by id, for a `PROPFIND` on their principal URL     |
+| `delegations(user)`                         | no       | whose calendars the user may use "on behalf of", see below      |
+| `delegates(principal)`, `setDelegates(…)`   | no       | the principal's delegates, shown and changed by clients         |
 
 ### Principal
 
@@ -327,6 +329,28 @@ are offered.
 Clients sometimes read a found user's principal URL afterwards. `getPrincipal(principal, id)` returns the same shape
 as a search result, or `null` for users the principal may not see (404); without it such URLs answer 403.
 
+### Delegation
+
+A delegate uses another user's calendars "on behalf of" them (CalendarServer's calendar-proxy model, which Apple
+Calendar shows as "Delegates" / "Accounts I can access"). `delegations(user)` says whose calendars the user may use:
+
+```ts
+async delegations(user) {
+    const rows = await db.delegations.where({delegate: user.id});
+    return rows.map(r => ({principal: toPrincipal(r.owner), write: r.canWrite}));
+},
+```
+
+- The user's principal reports `calendar-proxy-read-for` / `calendar-proxy-write-for` and `group-membership`, and
+  `expand-property` resolves them to the owners' names and addresses.
+- Requests below `/calendars/<owner>/`, `/inbox/<owner>/`, `/outbox/<owner>/` and `/principals/<owner>/` run as the
+  owner: every provider method gets the owner's principal, `current-user-principal` stays the signed-in user. Read
+  delegates can't write, create, delete or schedule; write delegates are still limited by `readOnly` of each calendar.
+  Changes a write delegate makes are scheduled as the owner.
+- With `delegates(principal)` the principal has two proxy groups, `/principals/<id>/calendar-proxy-read/` and
+  `calendar-proxy-write/`, whose `group-member-set` lists the delegates. With `setDelegates(principal, write, ids)` the
+  client can change them (PROPPATCH of `group-member-set`).
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -370,7 +394,7 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - Locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
   `putObject` and sends no invitations)
 - Other users' calendars: their principal URL answers with `getPrincipal`, their calendar home 403
-- Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)
+- Sharing invitations (`CS:invite`)
 - Attachments (managed attachments, RFC 8607)
 
 ## Example server

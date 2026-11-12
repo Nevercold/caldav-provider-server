@@ -335,6 +335,7 @@ function freeBusyReply(request: Component, recipient: string, busy: string, rang
 export async function handleOutboxPost(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
     if (r.kind !== 'outbox') throw new CalDavError(405, 'POST is only supported on the scheduling outbox');
+    if (!ctx.writable) throw CalDavError.forbidden('read-only delegates cannot schedule');
 
     let vcal;
     try {

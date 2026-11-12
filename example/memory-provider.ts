@@ -5,6 +5,8 @@ import {
     type CalendarChanges,
     type CalendarObject,
     type Changes,
+    type Delegate,
+    type Delegation,
     type MoveObjectInput,
     type NewCalendar,
     type Principal,
@@ -194,6 +196,41 @@ export class MemoryProvider implements CalDavProvider<User> {
                 return query.test === 'allof' ? query.terms.every(hit) : query.terms.some(hit);
             })
             .map((u) => ({id: u.id, displayName: u.displayName, addresses: u.addresses ?? []}));
+    }
+
+    /** owner id → delegate id → write access */
+    private readonly proxies = new Map<string, Map<string, boolean>>();
+
+    /** Lets `delegate` use the calendars of `owner`. */
+    addDelegate(owner: string, delegate: string, write: boolean): this {
+        if (!this.proxies.has(owner)) this.proxies.set(owner, new Map());
+        this.proxies.get(owner)!.set(delegate, write);
+        return this;
+    }
+
+    async delegations(user: User): Promise<Delegation<User>[]> {
+        const out: Delegation<User>[] = [];
+        for (const [owner, delegates] of this.proxies) {
+            const write = delegates.get(user.id);
+            const principal = this.users.get(owner);
+            if (write !== undefined && principal) out.push({principal, write});
+        }
+        return out;
+    }
+
+    async delegates(principal: User): Promise<Delegate[]> {
+        return [...(this.proxies.get(principal.id) ?? new Map<string, boolean>())]
+            .map(([id, write]) => ({u: this.users.get(id), write}))
+            .filter((e): e is {u: User; write: boolean} => !!e.u)
+            .map(({u, write}) => ({id: u.id, displayName: u.displayName, addresses: u.addresses ?? [], write}));
+    }
+
+    async setDelegates(principal: User, write: boolean, ids: string[]): Promise<void> {
+        if (ids.some((id) => !this.users.has(id))) throw new CalDavError(409, 'unknown user');
+        const current = this.proxies.get(principal.id) ?? new Map<string, boolean>();
+        for (const [id, w] of [...current]) if (w === write) current.delete(id);
+        for (const id of ids) current.set(id, write);
+        this.proxies.set(principal.id, current);
     }
 
     async getPrincipal(_principal: User, id: string): Promise<PrincipalSearchResult | null> {

@@ -25,7 +25,9 @@ const provider = new MemoryProvider()
     .addCalendar({id: 'personal', displayName: 'Personal', components: ['VEVENT'], color: '#1E88E5FF', order: 1}, {alice: 'write'})
     .addCalendar({id: 'bob', displayName: 'Bob', components: ['VEVENT'], color: '#43A047FF', order: 1}, {bob: 'write'})
     .addCalendar({id: 'team', displayName: 'Team (read-only for Bob)', components: ['VEVENT'], color: '#E53935FF', order: 2}, {alice: 'write', bob: 'read'})
-    .addCalendar({id: 'todos', displayName: 'Team to-dos', components: ['VTODO'], color: '#FB8C00FF', order: 3}, {alice: 'write', bob: 'write'});
+    .addCalendar({id: 'todos', displayName: 'Team to-dos', components: ['VTODO'], color: '#FB8C00FF', order: 3}, {alice: 'write', bob: 'write'})
+    // Alice may read Bob's calendars (Apple Calendar: "Delegates" in the account settings).
+    .addDelegate('bob', 'alice', false);
 
 const now = new Date();
 const stamp = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');

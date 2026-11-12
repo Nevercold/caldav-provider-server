@@ -5,7 +5,7 @@ import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter
 import {floatingZoneOf, freeBusyQuery} from './freebusy.ts';
 import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
 import {parseIcs} from './ical.ts';
-import {propResponse, statusResponse} from './props.ts';
+import {getProp, propResponse, statusResponse} from './props.ts';
 import type {Calendar, CalendarObject, PrincipalSearchQuery} from './types.ts';
 import {child, children, d, el, is, NS, type QName, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
 
@@ -195,18 +195,64 @@ function calendarServerPrincipalSearch(ctx: Context, root: XmlElement): Promise<
     );
 }
 
+/** One `<D:property>` of an expand-property request, with the properties to expand it with. */
+interface ExpandSpec {
+    q: QName;
+    nested: ExpandSpec[];
+}
+
+function expandSpecs(el: XmlElement): ExpandSpec[] {
+    return children(el)
+        .filter((c) => is(c, NS.DAV, 'property') && c.getAttribute('name'))
+        .map((p) => ({q: {ns: p.getAttribute('namespace') || NS.DAV, name: p.getAttribute('name')!}, nested: expandSpecs(p)}));
+}
+
+/** A DAV:response for `r`; hrefs in properties with nested specs become responses of their targets. */
+async function expandResponse(ctx: Context, r: Resource, specs: ExpandSpec[], depth: number): Promise<XNode> {
+    const found: XNode[] = [];
+    const missing: XNode[] = [];
+    for (const spec of specs) {
+        const result = await getProp(ctx, r, spec.q);
+        if (result.status !== 200) {
+            missing.push(el(spec.q.ns, spec.q.name));
+            continue;
+        }
+        let value = result.value;
+        if (spec.nested.length && depth < 3) {
+            value = [];
+            for (const kid of result.value.flat()) {
+                const isHref = kid && typeof kid === 'object' && kid.ns === NS.DAV && kid.name === 'href';
+                if (!isHref) {
+                    value.push(kid);
+                    continue;
+                }
+                const target = String(kid.children?.[0] ?? '');
+                try {
+                    value.push(await expandResponse(ctx, await ctx.resolve(ctx.pathOfHref(target)), spec.nested, depth + 1));
+                } catch (e) {
+                    if (!(e instanceof CalDavError)) throw e;
+                    value.push(statusResponse(target, `HTTP/1.1 ${e.status === 403 ? '403 Forbidden' : '404 Not Found'}`));
+                }
+            }
+        }
+        found.push(el(spec.q.ns, spec.q.name, ...value));
+    }
+    const propstat = (list: XNode[], status: string) => d('propstat', d('prop', ...list), d('status', status));
+    return d(
+        'response',
+        d('href', ctx.href(r)),
+        found.length || !missing.length ? propstat(found, 'HTTP/1.1 200 OK') : null,
+        missing.length ? propstat(missing, 'HTTP/1.1 404 Not Found') : null,
+    );
+}
+
 /**
- * expand-property (RFC 3253 3.8). Apple asks for proxy and group membership
- * properties with it. Nested properties are not expanded; the properties are
- * reported like in a PROPFIND, which answers 404 for the ones that do not exist.
+ * expand-property (RFC 3253 3.8). Apple asks for the delegation properties with it
+ * (calendar-proxy-write-for with the owners' names and addresses).
  */
 async function expandProperty(ctx: Context, root: XmlElement, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
-    const props = children(root)
-        .filter((c) => is(c, NS.DAV, 'property'))
-        .map((p) => ({ns: p.getAttribute('namespace') || NS.DAV, name: p.getAttribute('name') ?? ''}))
-        .filter((q) => q.name);
-    return multistatus([await propResponse(ctx, r, props)]);
+    return multistatus([await expandResponse(ctx, r, expandSpecs(root), 0)]);
 }
 
 /**

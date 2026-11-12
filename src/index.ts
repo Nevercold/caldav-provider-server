@@ -10,6 +10,8 @@ export type {
     CalendarObject,
     Changes,
     ComponentType,
+    Delegate,
+    Delegation,
     DeleteObjectInput,
     MoveObjectInput,
     NewCalendar,

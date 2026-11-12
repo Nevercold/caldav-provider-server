@@ -226,6 +226,18 @@ export interface PrincipalSearchQuery {
     limit?: number;
 }
 
+/** A principal whose calendars the user may use. */
+export interface Delegation<P extends Principal = Principal> {
+    principal: P;
+    /** Write delegate: may change objects (still limited by `readOnly` of each calendar). */
+    write: boolean;
+}
+
+/** A delegate of a principal. */
+export interface Delegate extends PrincipalSearchResult {
+    write: boolean;
+}
+
 /** All methods are async. Throw a `CalDavError` to answer with a specific status. */
 export interface CalDavProvider<P extends Principal = Principal> {
     /** Check HTTP Basic credentials. Return null if they are wrong. */
@@ -289,4 +301,21 @@ export interface CalDavProvider<P extends Principal = Principal> {
      * other principals' URLs answer 403.
      */
     getPrincipal?(principal: P, id: string): Promise<PrincipalSearchResult | null>;
+    /**
+     * Whose calendars the user may use as a delegate ("on behalf of"). Requests below another
+     * principal's URLs then run as that principal: every provider method gets the owner, and
+     * read-only delegates can't write. Clients find these through calendar-proxy-read-for /
+     * calendar-proxy-write-for on the user's principal. Without it, there is no delegation.
+     */
+    delegations?(user: P): Promise<Delegation<P>[]>;
+    /**
+     * Who may use the principal's calendars, for the proxy groups clients show in their
+     * delegation settings (`/principals/<id>/calendar-proxy-read/` and `-write/`).
+     */
+    delegates?(principal: P): Promise<Delegate[]>;
+    /**
+     * Replace the read (`write: false`) or write delegates of the principal, when a client changes
+     * them in its delegation settings (PROPPATCH of group-member-set). Without it, they are read-only.
+     */
+    setDelegates?(principal: P, write: boolean, ids: string[]): Promise<void>;
 }

@@ -1,6 +1,6 @@
 import type {CalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
-import type {Calendar, CalDavProvider, CalendarObject, Principal, PrincipalSearchResult} from './types.ts';
+import type {Calendar, CalDavProvider, CalendarObject, Delegation, Principal, PrincipalSearchResult} from './types.ts';
 
 export type Resource =
     | {kind: 'root'}
@@ -8,6 +8,8 @@ export type Resource =
     | {kind: 'principal'}
     /** Another user, as `getPrincipal` describes them. */
     | {kind: 'other-principal'; found: PrincipalSearchResult}
+    /** CalendarServer proxy group of the principal: its read or write delegates. */
+    | {kind: 'proxy-group'; write: boolean}
     | {kind: 'home'}
     | {kind: 'calendar'; calendar: Calendar}
     | {kind: 'object'; calendar: Calendar; name: string; object: CalendarObject | null}
@@ -58,15 +60,43 @@ export class Context<P extends Principal = Principal> {
 
     readonly provider: CalDavProvider<P>;
     readonly base: string;
+    /** Owner of the resources of this request: the signed-in user, or whom they act for. */
     readonly principal: P;
+    /** The signed-in user. */
+    readonly user: P;
+    /** False if the user is a read-only delegate of `principal`. */
+    readonly writable: boolean;
 
     /** The `calendar-data` a REPORT asked for, if it wants less than the full object. */
     calendarData?: CalendarDataRequest;
 
-    constructor(provider: CalDavProvider<P>, base: string, principal: P) {
+    private delegationsPromise?: Promise<Delegation<P>[]>;
+
+    constructor(provider: CalDavProvider<P>, base: string, principal: P, user: P = principal, writable = true) {
         this.provider = provider;
         this.base = base;
         this.principal = principal;
+        this.user = user;
+        this.writable = writable;
+    }
+
+    /** The user acts for another principal (delegation in CalendarServer's calendar-proxy model). */
+    get delegated(): boolean {
+        return this.user.id !== this.principal.id;
+    }
+
+    /** Whose calendars the signed-in user may use, from the provider. */
+    delegations(): Promise<Delegation<P>[]> {
+        this.delegationsPromise ??= this.provider.delegations ? this.provider.delegations(this.user) : Promise.resolve([]);
+        return this.delegationsPromise;
+    }
+
+    userHref(): string {
+        return `${this.base}/principals/${this.seg(this.user.id)}/`;
+    }
+
+    proxyGroupHref(owner: string, write: boolean): string {
+        return `${this.base}/principals/${this.seg(owner)}/calendar-proxy-${write ? 'write' : 'read'}/`;
     }
 
     get scheduling(): boolean {
@@ -83,16 +113,16 @@ export class Context<P extends Principal = Principal> {
     }
 
     canWrite(calendar: Calendar): boolean {
-        return !!this.provider.putObject && !calendar.readOnly;
+        return this.writable && !!this.provider.putObject && !calendar.readOnly;
     }
 
     canDelete(calendar: Calendar): boolean {
-        return !!this.provider.deleteObject && !calendar.readOnly;
+        return this.writable && !!this.provider.deleteObject && !calendar.readOnly;
     }
 
     /** Name, color, order and description can be changed (PROPPATCH). */
     canEditCalendar(calendar: Calendar): boolean {
-        return !!this.provider.updateCalendar && !calendar.readOnly;
+        return this.writable && !!this.provider.updateCalendar && !calendar.readOnly;
     }
 
     /** Lowercased `mailto:` addresses of the current principal. */
@@ -146,6 +176,8 @@ export class Context<P extends Principal = Principal> {
                 return this.principalHref();
             case 'other-principal':
                 return `${this.principalsHref()}${this.seg(r.found.id)}/`;
+            case 'proxy-group':
+                return this.proxyGroupHref(this.principal.id, r.write);
             case 'home':
                 return this.homeHref();
             case 'calendar':
@@ -192,17 +224,26 @@ export class Context<P extends Principal = Principal> {
         }
         if (owner !== this.principal.id) {
             // Other users' principal URLs can be read if the provider describes them.
-            if (area === 'principals' && !rest.length && this.provider.getPrincipal) {
-                const found = await this.provider.getPrincipal(this.principal, owner);
-                if (!found) throw CalDavError.notFound();
-                return {kind: 'other-principal', found: {...found, id: owner}};
+            if (area === 'principals' && !rest.length) {
+                const delegation = (await this.delegations()).find((d) => d.principal.id === owner);
+                if (delegation) {
+                    const p = delegation.principal;
+                    return {kind: 'other-principal', found: {id: owner, displayName: p.displayName, addresses: p.addresses ?? []}};
+                }
+                if (this.provider.getPrincipal) {
+                    const found = await this.provider.getPrincipal(this.user, owner);
+                    if (!found) throw CalDavError.notFound();
+                    return {kind: 'other-principal', found: {...found, id: owner}};
+                }
             }
             throw CalDavError.forbidden('resource of another principal');
         }
 
         if (area === 'principals') {
-            if (rest.length) throw CalDavError.notFound();
-            return {kind: 'principal'};
+            if (!rest.length) return {kind: 'principal'};
+            const group = rest.length === 1 ? /^calendar-proxy-(read|write)$/.exec(rest[0]!) : null;
+            if (!group || !this.provider.delegates) throw CalDavError.notFound();
+            return {kind: 'proxy-group', write: group[1] === 'write'};
         }
         if (area === 'outbox') {
             if (rest.length || !this.scheduling) throw CalDavError.notFound();

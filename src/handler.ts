@@ -57,6 +57,8 @@ export async function childResources(ctx: Context, r: Resource): Promise<Resourc
         }
         case 'inbox':
             return (await ctx.inboxItems()).map((object) => ({kind: 'inbox-item', name: object.name, object}));
+        case 'principal':
+            return ctx.provider.delegates ? [{kind: 'proxy-group', write: false}, {kind: 'proxy-group', write: true}] : [];
         default:
             return [];
     }
@@ -210,7 +212,7 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
     if (r.kind === 'inbox-item') {
         if (!r.object) throw CalDavError.notFound();
         const s = ctx.provider.scheduling!;
-        if (!s.deleteInboxItem) throw CalDavError.forbidden('inbox is read-only');
+        if (!s.deleteInboxItem || !ctx.writable) throw CalDavError.forbidden('inbox is read-only');
         await s.deleteInboxItem(ctx.principal, r.name);
         return {status: 204, headers: {}};
     }
@@ -349,6 +351,20 @@ function davHeader(provider: CalDavProvider<never>): string {
 }
 
 /**
+ * The request runs as the owner of the path if the user is their delegate: below
+ * `/calendars/<owner>/`, `/inbox/<owner>/`, `/outbox/<owner>/` and `/principals/<owner>/…`.
+ */
+async function contextFor<P extends Principal>(provider: CalDavProvider<P>, base: string, user: P, path: string): Promise<Context<P>> {
+    const ctx = new Context(provider, base, user);
+    if (!provider.delegations) return ctx;
+    const segs = ctx.segments(path);
+    const owner = segs?.[1];
+    if (!segs || owner === undefined || owner === user.id || !['calendars', 'inbox', 'outbox', 'principals'].includes(segs[0]!)) return ctx;
+    const delegation = (await ctx.delegations()).find((d) => d.principal.id === owner);
+    return delegation ? new Context(provider, base, delegation.principal, user, delegation.write) : ctx;
+}
+
+/**
  * Creates the framework-independent request handler.
  *
  * ```ts
@@ -380,7 +396,7 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                     body: 'Unauthorized',
                 };
             }
-            const ctx = new Context(provider, base, principal);
+            const ctx = await contextFor(provider, base, principal, path);
             let res: CalDavResponse;
             switch (method) {
                 case 'PROPFIND':

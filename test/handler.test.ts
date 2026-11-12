@@ -506,6 +506,7 @@ describe('REPORT', () => {
             body: '<A:expand-property xmlns:A="DAV:"><A:property name="calendar-proxy-write-for" namespace="http://calendarserver.org/ns/"><A:property name="displayname" namespace="DAV:"/></A:property><A:property name="displayname" namespace="DAV:"/></A:expand-property>',
         });
         expect(res.status).toBe(207);
-        expect(props(res)['/dav/principals/alice/']).toEqual({displayname: 'Alice'});
+        // No delegations: an empty calendar-proxy-write-for.
+        expect(props(res)['/dav/principals/alice/']).toEqual({displayname: 'Alice', 'calendar-proxy-write-for': ''});
     });
 });

@@ -43,15 +43,17 @@ function privilegeSet(ctx: Context, r: Resource): XNode[] {
         }
         case 'home': {
             const set = [...read];
-            if (ctx.provider.createCalendar) set.push(write[1]!);
-            if (ctx.provider.deleteCalendar) set.push(write[2]!);
+            if (ctx.provider.createCalendar && ctx.writable) set.push(write[1]!);
+            if (ctx.provider.deleteCalendar && ctx.writable) set.push(write[2]!);
             return privileges(...set);
         }
         case 'inbox':
         case 'inbox-item':
-            return privileges(...read, [NS.DAV, 'unbind'], [NS.CALDAV, 'schedule-deliver']);
+            return privileges(...read, ...(ctx.writable ? [[NS.DAV, 'unbind'] as [string, string]] : []), [NS.CALDAV, 'schedule-deliver']);
         case 'outbox':
-            return privileges(...read, [NS.CALDAV, 'schedule-send']);
+            return privileges(...read, ...(ctx.writable ? [[NS.CALDAV, 'schedule-send'] as [string, string]] : []));
+        case 'proxy-group':
+            return privileges(...read, ...(ctx.provider.setDelegates && !ctx.delegated ? [[NS.DAV, 'write-properties'] as [string, string]] : []));
         default:
             return privileges(...read);
     }
@@ -95,6 +97,8 @@ def(NS.DAV, 'resourcetype', (_ctx, r) => {
             return ok(d('collection'));
         case 'principal':
             return ok(d('collection'), d('principal'));
+        case 'proxy-group':
+            return ok(d('principal'), el(NS.CS, r.write ? 'calendar-proxy-write' : 'calendar-proxy-read'));
         case 'calendar':
             return ok(d('collection'), cal('calendar'));
         case 'inbox':
@@ -110,6 +114,8 @@ def(NS.DAV, 'displayname', (ctx, r) => {
     switch (r.kind) {
         case 'principal':
             return ok(ctx.principal.displayName ?? ctx.principal.id);
+        case 'proxy-group':
+            return ok(`${ctx.principal.displayName ?? ctx.principal.id} (${r.write ? 'write' : 'read'} delegates)`);
         case 'calendar':
             return ok(r.calendar.displayName);
         case 'inbox':
@@ -121,8 +127,32 @@ def(NS.DAV, 'displayname', (ctx, r) => {
     }
 });
 
-def(NS.DAV, 'current-user-principal', (ctx) => ok(href(ctx.principalHref())));
-def(NS.DAV, 'principal-URL', (ctx, r) => (r.kind === 'principal' ? ok(href(ctx.principalHref())) : undefined));
+def(NS.DAV, 'current-user-principal', (ctx) => ok(href(ctx.userHref())));
+def(NS.DAV, 'principal-URL', (ctx, r) => {
+    if (r.kind === 'principal') return ok(href(ctx.principalHref()));
+    return r.kind === 'proxy-group' ? ok(href(ctx.href(r))) : undefined;
+});
+
+// --- Delegation (CalendarServer calendar-proxy, caldav-proxy.txt) ---
+
+def(NS.DAV, 'group-member-set', async (ctx, r) => {
+    if (r.kind !== 'proxy-group') return undefined;
+    const delegates = await ctx.provider.delegates!(ctx.principal);
+    return delegates.filter((dl) => dl.write === r.write).map((dl) => href(`${ctx.principalsHref()}${encodeURIComponent(dl.id)}/`));
+});
+
+def(NS.DAV, 'group-membership', async (ctx, r) => {
+    if (r.kind !== 'principal' || ctx.delegated || !ctx.provider.delegations) return undefined;
+    return (await ctx.delegations()).map((dl) => href(ctx.proxyGroupHref(dl.principal.id, dl.write)));
+});
+
+for (const write of [false, true]) {
+    def(NS.CS, write ? 'calendar-proxy-write-for' : 'calendar-proxy-read-for', async (ctx, r) => {
+        if (r.kind !== 'principal' || ctx.delegated || !ctx.provider.delegations) return undefined;
+        const owners = (await ctx.delegations()).filter((dl) => dl.write === write);
+        return owners.map((dl) => href(`${ctx.principalsHref()}${encodeURIComponent(dl.principal.id)}/`));
+    });
+}
 def(NS.DAV, 'owner', (ctx, r) => (r.kind === 'root' || r.kind === 'principals' ? undefined : ok(href(ctx.principalHref()))));
 def(NS.DAV, 'principal-collection-set', (ctx) => ok(href(ctx.principalsHref())));
 def(NS.DAV, 'current-user-privilege-set', (ctx, r) => privilegeSet(ctx, r));
@@ -181,6 +211,7 @@ def(NS.DAV, 'supported-report-set', (ctx, r) => {
         case 'home':
             return ok(report(NS.DAV, 'sync-collection'));
         case 'principal':
+        case 'proxy-group':
             return ok(report(NS.DAV, 'expand-property'));
         case 'principals':
             return ok(

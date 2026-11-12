@@ -232,14 +232,14 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
  * MOVE of an object to another calendar (RFC 4918 9.9), through the provider's `moveObject`.
  * Collections can't be moved; the target calendar must accept the component.
  */
-async function move(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
-    if (!ctx.provider.moveObject) throw CalDavError.forbidden('MOVE is not supported');
-    const r = await ctx.resolve(path);
-    if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be moved');
-    if (!r.object) throw CalDavError.notFound();
-
+/** Destination of a MOVE or COPY (RFC 4918 10.3): an object resource on this server. */
+async function destinationOf(
+    ctx: Context,
+    req: CalDavRequest,
+    source: Extract<Resource, {kind: 'object'}>,
+): Promise<Extract<Resource, {kind: 'object'}>> {
     const destination = header(req, 'destination');
-    if (!destination) throw new CalDavError(400, 'MOVE needs a Destination header');
+    if (!destination) throw new CalDavError(400, `${req.method.toUpperCase()} needs a Destination header`);
     let destinationPath: string;
     try {
         destinationPath = new URL(destination, 'http://x').pathname;
@@ -258,17 +258,31 @@ async function move(ctx: Context, req: CalDavRequest, path: string): Promise<Cal
         throw e;
     }
     if (target.kind !== 'object') throw CalDavError.forbidden('the destination must be a calendar object');
-    if (target.calendar.id === r.calendar.id && target.name === r.name) throw CalDavError.forbidden('source and destination are the same');
+    if (target.calendar.id === source.calendar.id && target.name === source.name) {
+        throw CalDavError.forbidden('source and destination are the same');
+    }
+    return target;
+}
+
+/** Component type and UID of stored data, if it is a valid object. */
+function infoOf(ics: string) {
+    const vcal = safeParse(ics);
+    try {
+        return vcal ? inspectObject(vcal) : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+async function move(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    if (!ctx.provider.moveObject) throw CalDavError.forbidden('MOVE is not supported');
+    const r = await ctx.resolve(path);
+    if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be moved');
+    if (!r.object) throw CalDavError.notFound();
+    const target = await destinationOf(ctx, req, r);
     if (!ctx.canDelete(r.calendar) || !ctx.canWrite(target.calendar)) throw CalDavError.forbidden('calendar is read-only');
 
-    const vcal = safeParse(r.object.ics);
-    const componentType = vcal ? (() => {
-        try {
-            return inspectObject(vcal).componentType;
-        } catch {
-            return undefined;
-        }
-    })() : undefined;
+    const componentType = infoOf(r.object.ics)?.componentType;
     if (componentType && !target.calendar.components.includes(componentType)) {
         throw CalDavError.caldav(403, 'supported-calendar-component', `calendar does not accept ${componentType}`);
     }
@@ -277,6 +291,38 @@ async function move(ctx: Context, req: CalDavRequest, path: string): Promise<Cal
     const ifMatch = checkPreconditions(ctx, req, r.object);
 
     await ctx.provider.moveObject(ctx.principal, r.calendar, target.calendar, {name: r.name, destinationName: target.name, overwrite, ifMatch});
+    return {status: target.object ? 204 : 201, headers: {}};
+}
+
+/**
+ * COPY of an object into another calendar (RFC 4918 9.8), stored with the provider's
+ * `putObject`. A copy within the same calendar would hold the UID twice (RFC 4791 5.3.2.1).
+ * The copy is not scheduled: attendees already have the event.
+ */
+async function copy(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    const r = await ctx.resolve(path);
+    if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be copied');
+    if (!r.object) throw CalDavError.notFound();
+    const target = await destinationOf(ctx, req, r);
+    if (!ctx.canWrite(target.calendar)) throw CalDavError.forbidden('calendar is read-only');
+    if (target.calendar.id === r.calendar.id) throw CalDavError.uidConflict('the calendar already holds this UID');
+
+    const info = infoOf(r.object.ics);
+    if (!info) throw CalDavError.caldav(403, 'valid-calendar-object-resource', 'the object cannot be copied');
+    if (!target.calendar.components.includes(info.componentType)) {
+        throw CalDavError.caldav(403, 'supported-calendar-component', `calendar does not accept ${info.componentType}`);
+    }
+    const overwrite = header(req, 'overwrite')?.trim().toUpperCase() !== 'F';
+    if (target.object && !overwrite) throw CalDavError.preconditionFailed('destination exists');
+    checkPreconditions(ctx, req, r.object);
+
+    await ctx.provider.putObject!(ctx.principal, target.calendar, {
+        name: target.name,
+        uid: info.uid,
+        ics: r.object.ics,
+        componentType: info.componentType,
+        isNew: !target.object,
+    });
     return {status: target.object ? 204 : 201, headers: {}};
 }
 
@@ -366,7 +412,8 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                     res = await mkcalendar(ctx, req, path, method);
                     break;
                 case 'COPY':
-                    throw CalDavError.forbidden(`${method} is not supported`);
+                    res = await copy(ctx, req, path);
+                    break;
                 default:
                     return {status: 405, headers: {Allow: METHODS.join(', ')}};
             }

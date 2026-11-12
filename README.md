@@ -361,7 +361,8 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 ## What is not supported
 
 - `PROPPATCH` of anything but calendars
-- ACLs (`DAV:acl`), locking, `COPY`; `MOVE` only of objects between calendars (`moveObject`)
+- ACLs (`DAV:acl`), locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
+  `putObject` and sends no invitations)
 - Reading other principals' resources: a found principal's URL answers 403; clients only need its search result
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)
 - Attachments (managed attachments, RFC 8607)

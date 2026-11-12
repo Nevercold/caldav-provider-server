@@ -188,6 +188,38 @@ describe('MOVE', () => {
     });
 });
 
+describe('COPY', () => {
+    const EVENT = ics('VEVENT', 'c1', 'DTSTART:20260601T100000Z', 'SUMMARY:Copy me');
+    const from = '/dav/calendars/alice/personal/c1.ics';
+    const to = '/dav/calendars/alice/team/c1.ics';
+
+    it('copies an object into another calendar and keeps the source', async () => {
+        const {request} = setup();
+        await request('PUT', from, {body: EVENT});
+        expect((await request('COPY', from, {headers: {destination: to}})).status).toBe(201);
+        expect((await request('GET', from)).body).toBe(EVENT);
+        expect((await request('GET', to)).body).toBe(EVENT);
+        expect((await request('COPY', from, {headers: {destination: to}})).status).toBe(204);
+        expect((await request('COPY', from, {headers: {destination: to, overwrite: 'F'}})).status).toBe(412);
+    });
+
+    it('keeps the rules: same calendar, component, read-only, collections', async () => {
+        const {request} = setup();
+        await request('PUT', from, {body: EVENT});
+        const same = await request('COPY', from, {headers: {destination: '/dav/calendars/alice/personal/c2.ics'}});
+        expect(same.status).toBe(403);
+        expect(same.body).toContain('no-uid-conflict');
+        expect((await request('COPY', from, {headers: {destination: '/dav/calendars/alice/todos/c1.ics'}})).status).toBe(403);
+        expect((await request('COPY', from, {headers: {destination: to, 'if-match': '"nope"'}})).status).toBe(412);
+        expect((await request('COPY', '/dav/calendars/alice/personal/', {headers: {destination: '/dav/calendars/alice/x/'}})).status).toBe(403);
+        await request('PUT', '/dav/calendars/alice/team/t.ics', {body: ics('VEVENT', 't', 'DTSTART:20260601T100000Z')});
+        const bob = await request('COPY', '/dav/calendars/bob/team/t.ics', {user: 'bob', headers: {destination: '/dav/calendars/bob/bobcal/t.ics'}});
+        expect(bob.status).toBe(201);
+        const back = await request('COPY', '/dav/calendars/bob/bobcal/t.ics', {user: 'bob', headers: {destination: '/dav/calendars/bob/team/u.ics'}});
+        expect(back.status).toBe(403);
+    });
+});
+
 describe('principal search', () => {
     const CS = 'xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"';
     const PROPS = '<d:prop><d:displayname/><c:calendar-user-address-set/><cs:email-address-set/><cs:first-name/></d:prop>';

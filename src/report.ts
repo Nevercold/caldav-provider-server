@@ -1,11 +1,11 @@
-import {type Context, homeSyncToken, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
+import {type Context, homeSyncToken, normalizeAddresses, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
 import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
 import {parseIcs} from './ical.ts';
 import {propResponse, statusResponse} from './props.ts';
-import type {Calendar, CalendarObject} from './types.ts';
-import {child, children, d, is, NS, type QName, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
+import type {Calendar, CalendarObject, PrincipalSearchQuery, PrincipalSearchResult} from './types.ts';
+import {child, children, d, el, is, type Kid, NS, type QName, qkey, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
 
 function requestedProps(root: XmlElement): QName[] {
     const prop = child(root, NS.DAV, 'prop');
@@ -146,22 +146,95 @@ async function syncHome(ctx: Context, tokenUri: string, props: QName[]): Promise
     return multistatus(responses, d('sync-token', syncTokenUri(homeSyncToken(calendars))));
 }
 
+/** Properties a found principal (not the signed-in one) answers with. */
+function foundPrincipalProp(ctx: Context, found: PrincipalSearchResult, q: QName): Kid[] | undefined {
+    const href = (h: string) => d('href', h);
+    const self = `${ctx.principalsHref()}${encodeURIComponent(found.id)}/`;
+    const addresses = normalizeAddresses(found.addresses);
+    const name = found.displayName ?? found.id;
+    switch (qkey(q)) {
+        case qkey({ns: NS.DAV, name: 'displayname'}):
+            return [name];
+        case qkey({ns: NS.DAV, name: 'resourcetype'}):
+            return [d('collection'), d('principal')];
+        case qkey({ns: NS.DAV, name: 'principal-URL'}):
+            return [href(self)];
+        case qkey({ns: NS.CALDAV, name: 'calendar-user-address-set'}):
+            return [...addresses.map(href), href(self)];
+        case qkey({ns: NS.CALDAV, name: 'calendar-user-type'}):
+            return ['INDIVIDUAL'];
+        case qkey({ns: NS.CS, name: 'email-address-set'}):
+            return addresses.filter((a) => a.startsWith('mailto:')).map((a) => el(NS.CS, 'email-address', a.slice(7)));
+        case qkey({ns: NS.CS, name: 'record-type'}):
+            return ['users'];
+        default:
+            return undefined;
+    }
+}
+
+function foundPrincipalResponse(ctx: Context, found: PrincipalSearchResult, props: QName[]): XNode {
+    const values = props.map((q) => ({q, value: foundPrincipalProp(ctx, found, q)}));
+    const ok = values.filter((v) => v.value !== undefined).map((v) => el(v.q.ns, v.q.name, ...v.value!));
+    const missing = values.filter((v) => v.value === undefined).map((v) => el(v.q.ns, v.q.name));
+    const propstat = (list: XNode[], status: string) => d('propstat', d('prop', ...list), d('status', status));
+    return d(
+        'response',
+        d('href', `${ctx.principalsHref()}${encodeURIComponent(found.id)}/`),
+        ok.length || !missing.length ? propstat(ok, 'HTTP/1.1 200 OK') : null,
+        missing.length ? propstat(missing, 'HTTP/1.1 404 Not Found') : null,
+    );
+}
+
 /**
- * principal-property-search (RFC 3744 9.4). Only the current user can be
- * found; it matches if any search value is contained in its id, name or
- * addresses.
+ * The signed-in principal if the terms match its id, name or addresses (clients
+ * look themselves up this way), plus the provider's results.
  */
-async function principalPropertySearch(ctx: Context, root: XmlElement): Promise<CalDavResponse> {
-    const r = await ctx.resolve(ctx.principalHref());
+async function principalSearch(ctx: Context, query: PrincipalSearchQuery, props: QName[]): Promise<CalDavResponse> {
+    const terms = query.terms.map((t) => t.trim().toLowerCase()).filter(Boolean);
+    if (!terms.length) return multistatus([]);
     const haystack = [ctx.principal.id, ctx.principal.displayName ?? '', ...ctx.addresses(), ctx.principalHref(), ctx.homeHref()]
         .join('\n')
         .toLowerCase();
-    const matches = children(root)
+    const selfHit = query.test === 'allof' ? terms.every((t) => haystack.includes(t)) : terms.some((t) => haystack.includes(t));
+
+    const responses: XNode[] = [];
+    if (selfHit) responses.push(await propResponse(ctx, await ctx.resolve(ctx.principalHref()), props));
+    if (ctx.provider.searchPrincipals) {
+        const found = await ctx.provider.searchPrincipals(ctx.principal, {...query, terms});
+        for (const f of found) {
+            if (f.id === ctx.principal.id) continue;
+            if (query.limit && responses.length >= query.limit) break;
+            responses.push(foundPrincipalResponse(ctx, f, props));
+        }
+    }
+    return multistatus(responses);
+}
+
+/** principal-property-search (RFC 3744 9.4): the match values are the terms. */
+function principalPropertySearch(ctx: Context, root: XmlElement): Promise<CalDavResponse> {
+    const terms = children(root)
         .filter((c) => is(c, NS.DAV, 'property-search'))
-        .map((c) => textOf(child(c, NS.DAV, 'match')).toLowerCase());
-    const anyOf = root.getAttribute('test') !== 'allof';
-    const hit = matches.length > 0 && (anyOf ? matches.some((m) => haystack.includes(m)) : matches.every((m) => haystack.includes(m)));
-    return multistatus(hit ? [await propResponse(ctx, r, requestedProps(root))] : []);
+        .map((c) => textOf(child(c, NS.DAV, 'match')));
+    return principalSearch(ctx, {terms, test: root.getAttribute('test') === 'allof' ? 'allof' : 'anyof'}, requestedProps(root));
+}
+
+/** Apple's calendarserver-principal-search (CalendarServer caldav-principal-search). */
+function calendarServerPrincipalSearch(ctx: Context, root: XmlElement): Promise<CalDavResponse> {
+    const terms = children(root)
+        .filter((c) => is(c, NS.CS, 'search-token'))
+        .map((c) => textOf(c));
+    const limitText = textOf(child(child(root, NS.CS, 'limit'), NS.CS, 'nresults'));
+    const limit = Number.parseInt(limitText, 10);
+    return principalSearch(
+        ctx,
+        {
+            terms,
+            test: root.getAttribute('test') === 'anyof' ? 'anyof' : 'allof',
+            context: root.getAttribute('context') || undefined,
+            limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+        },
+        requestedProps(root),
+    );
 }
 
 /**
@@ -178,6 +251,25 @@ async function expandProperty(ctx: Context, root: XmlElement, path: string): Pro
     return multistatus([await propResponse(ctx, r, props)]);
 }
 
+/**
+ * The properties a principal search can match. Without a provider search
+ * nothing is offered, so clients don't show a search that only finds the user.
+ */
+function principalSearchPropertySet(ctx: Context): CalDavResponse {
+    if (!ctx.provider.searchPrincipals) return xmlResponse(200, d('principal-search-property-set'));
+    const property = (ns: string, name: string, description: string) =>
+        d('principal-search-property', d('prop', el(ns, name)), {ns: NS.DAV, name: 'description', attrs: {'xml:lang': 'en'}, children: [description]});
+    return xmlResponse(
+        200,
+        d(
+            'principal-search-property-set',
+            property(NS.DAV, 'displayname', 'Display name'),
+            property(NS.CALDAV, 'calendar-user-address-set', 'Calendar user address'),
+            property(NS.CS, 'email-address-set', 'E-mail address'),
+        ),
+    );
+}
+
 export async function handleReport(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
     const root = parseBody(req);
     if (!root) throw new CalDavError(400, 'REPORT needs a body');
@@ -186,7 +278,7 @@ export async function handleReport(ctx: Context, req: CalDavRequest, path: strin
     if (is(root, NS.DAV, 'sync-collection')) return syncCollection(ctx, root, path);
     if (is(root, NS.DAV, 'expand-property')) return expandProperty(ctx, root, path);
     if (is(root, NS.DAV, 'principal-property-search')) return principalPropertySearch(ctx, root);
-    // No searchable properties: clients then do not offer principal search.
-    if (is(root, NS.DAV, 'principal-search-property-set')) return xmlResponse(200, d('principal-search-property-set'));
+    if (is(root, NS.CS, 'calendarserver-principal-search')) return calendarServerPrincipalSearch(ctx, root);
+    if (is(root, NS.DAV, 'principal-search-property-set')) return principalSearchPropertySet(ctx);
     throw CalDavError.dav(403, 'supported-report', `unsupported report ${root.localName}`);
 }

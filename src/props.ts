@@ -129,7 +129,11 @@ def(NS.DAV, 'supported-report-set', (ctx, r) => {
         case 'principal':
             return ok(report(NS.DAV, 'expand-property'));
         case 'principals':
-            return ok(report(NS.DAV, 'principal-property-search'), report(NS.DAV, 'principal-search-property-set'));
+            return ok(
+                report(NS.DAV, 'principal-property-search'),
+                report(NS.DAV, 'principal-search-property-set'),
+                ctx.provider.searchPrincipals ? report(NS.CS, 'calendarserver-principal-search') : null,
+            );
         default:
             return ok();
     }

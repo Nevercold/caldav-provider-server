@@ -112,6 +112,7 @@ becomes a 500 and is passed to `onError`.
 | `putObject(principal, calendar, input)`     | no       | create or replace; without it everything is read-only           |
 | `deleteObject(principal, calendar, input)`  | no       | delete                                                          |
 | `scheduling`                                | no       | enables RFC 6638, see below                                     |
+| `searchPrincipals(principal, query)`        | no       | other users to find, e.g. to invite them, see below             |
 
 ### Principal
 
@@ -264,6 +265,23 @@ Periods are clipped to the asked range; `maskUid` is the event being planned (Ap
 Scheduling inbox: Clients get messages through the server's automatic processing, not through the inbox, so the inbox
 is empty unless you implement `listInbox` / `deleteInboxItem`.
 
+### Finding other users
+
+Calendar apps suggest attendees while you type: Apple with `calendarserver-principal-search`, others with
+`principal-property-search`. Implement `searchPrincipals` to answer with the users the principal may invite; the client
+then puts their address in the event, which your scheduling provider recognizes:
+
+```ts
+async searchPrincipals(principal, {terms, test, limit}) {
+    const users = await usersVisibleTo(principal, terms, test === 'allof', limit ?? 50);
+    return users.map(u => ({id: u.id, displayName: u.name, addresses: [`mailto:${u.email}`]}));
+},
+```
+
+Results answer `displayname`, `calendar-user-address-set`, `email-address-set`, `principal-URL` and `calendar-user-type`.
+Without it, a search only finds the signed-in user (Thunderbird looks itself up that way) and no searchable properties
+are offered.
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -297,7 +315,7 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - Creating, renaming or recoloring calendars from a client (`MKCALENDAR`, `PROPPATCH` answer 403)
 - Partial `calendar-data` (`<C:comp>`, `<C:expand>`, `<C:limit-recurrence-set>`): the full object is always returned
 - `free-busy-query` REPORT, ACLs (`DAV:acl`), locking, `COPY`/`MOVE`
-- Searching other principals: `principal-property-search` only finds the current user
+- Reading other principals' resources: a found principal's URL answers 403; clients only need its search result
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)
 - Attachments (managed attachments, RFC 8607)
 

@@ -6,6 +6,8 @@ import {
     type Changes,
     type ComponentType,
     type Principal,
+    type PrincipalSearchQuery,
+    type PrincipalSearchResult,
     processSchedulingMessage,
     type PutObjectResult,
     type ScheduleStatus,
@@ -133,6 +135,18 @@ export class MemoryProvider implements CalDavProvider<User> {
         if (input.ifMatch && current.etag !== input.ifMatch) throw CalDavError.preconditionFailed();
         cal.objects.delete(input.name);
         cal.log.push({version: ++this.version, name: input.name, deleted: true});
+    }
+
+    /** Every other user whose name or address contains the terms (to invite them). */
+    async searchPrincipals(principal: User, query: PrincipalSearchQuery): Promise<PrincipalSearchResult[]> {
+        return [...this.users.values()]
+            .filter((u) => u.id !== principal.id)
+            .filter((u) => {
+                const haystack = [u.displayName ?? '', ...(u.addresses ?? [])].join('\n').toLowerCase();
+                const hit = (t: string) => haystack.includes(t);
+                return query.test === 'allof' ? query.terms.every(hit) : query.terms.some(hit);
+            })
+            .map((u) => ({id: u.id, displayName: u.displayName, addresses: u.addresses ?? []}));
     }
 
     private userByAddress(address: string): User | undefined {

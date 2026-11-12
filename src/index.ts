@@ -12,6 +12,8 @@ export type {
     DeleteObjectInput,
     ObjectQuery,
     Principal,
+    PrincipalSearchQuery,
+    PrincipalSearchResult,
     PutObjectInput,
     PutObjectResult,
     ScheduleStatus,

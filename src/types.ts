@@ -159,6 +159,26 @@ export interface SchedulingProvider<P extends Principal = Principal> {
     deleteInboxItem?(principal: P, name: string): Promise<void>;
 }
 
+/** Another calendar user found by a principal search (e.g. to invite them). */
+export interface PrincipalSearchResult {
+    /** URL-safe id; becomes the principal URL like a signed-in principal's id. */
+    id: string;
+    displayName?: string;
+    /** Calendar user addresses (`mailto:…`; plain e-mail addresses are prefixed). Clients invite by these. */
+    addresses: string[];
+}
+
+export interface PrincipalSearchQuery {
+    /** Search terms as typed, at least one. */
+    terms: string[];
+    /** `allof`: every term must match; `anyof`: one is enough. */
+    test: 'anyof' | 'allof';
+    /** Apple's search context, e.g. `attendee` when inviting, if given. */
+    context?: string;
+    /** Most results the client wants, if given. */
+    limit?: number;
+}
+
 /** All methods are async. Throw a `CalDavError` to answer with a specific status. */
 export interface CalDavProvider<P extends Principal = Principal> {
     /** Check HTTP Basic credentials. Return null if they are wrong. */
@@ -185,4 +205,11 @@ export interface CalDavProvider<P extends Principal = Principal> {
     deleteObject?(principal: P, calendar: Calendar, input: DeleteObjectInput): Promise<void>;
     /** Enables scheduling (RFC 6638). */
     scheduling?: SchedulingProvider<P>;
+    /**
+     * Other calendar users the principal may find, e.g. to invite them
+     * (principal-property-search, Apple's calendarserver-principal-search).
+     * Match the terms against names and addresses as you see fit. Without it,
+     * a search only finds the principal itself.
+     */
+    searchPrincipals?(principal: P, query: PrincipalSearchQuery): Promise<PrincipalSearchResult[]>;
 }

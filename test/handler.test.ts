@@ -142,6 +142,70 @@ describe('discovery', () => {
     });
 });
 
+describe('principal search', () => {
+    const CS = 'xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"';
+    const PROPS = '<d:prop><d:displayname/><c:calendar-user-address-set/><cs:email-address-set/><cs:first-name/></d:prop>';
+
+    it('offers the searchable properties and Apple\'s search report', async () => {
+        const {request} = setup();
+        const set = await request('REPORT', '/dav/principals/', {headers: {depth: '0'}, body: '<d:principal-search-property-set xmlns:d="DAV:"/>'});
+        expect(set.status).toBe(200);
+        expect(set.body).toContain('<d:displayname/>');
+        expect(set.body).toContain('<cs:email-address-set/>');
+        const reports = await request('PROPFIND', '/dav/principals/', {headers: {depth: '0'}, body: PROPFIND('<d:supported-report-set/>')});
+        expect(reports.body).toContain('calendarserver-principal-search');
+    });
+
+    it('offers nothing without a provider search', async () => {
+        const {provider, request} = setup();
+        (provider as {searchPrincipals?: unknown}).searchPrincipals = undefined;
+        const set = await request('REPORT', '/dav/principals/', {headers: {depth: '0'}, body: '<d:principal-search-property-set xmlns:d="DAV:"/>'});
+        expect(set.body).not.toContain('displayname');
+        const found = await request('REPORT', '/dav/principals/', {
+            body: `<d:principal-property-search ${CS}><d:property-search><d:prop><d:displayname/></d:prop><d:match>bob</d:match></d:property-search>${PROPS}</d:principal-property-search>`,
+        });
+        expect(Object.keys(props(found))).toEqual([]);
+    });
+
+    it('finds other users with principal-property-search', async () => {
+        const {request} = setup();
+        const res = await request('REPORT', '/dav/principals/', {
+            body: `<d:principal-property-search ${CS} test="anyof"><d:property-search><d:prop><d:displayname/></d:prop><d:match>bo</d:match></d:property-search>${PROPS}</d:principal-property-search>`,
+        });
+        expect(res.status).toBe(207);
+        const bob = props(res)['/dav/principals/bob/']!;
+        expect(bob.displayname).toBe('Bob');
+        expect(bob['calendar-user-address-set']).toBe('href(mailto:bob@example.com) href(/dav/principals/bob/)');
+        expect(bob['email-address-set']).toBe('email-address(bob@example.com)');
+        expect(res.body).toMatch(/<cs:first-name\/><\/d:prop><d:status>HTTP\/1.1 404/);
+    });
+
+    it('still finds the user itself (Thunderbird looks itself up)', async () => {
+        const {request} = setup();
+        const res = await request('REPORT', '/dav/principals/', {
+            body: `<d:principal-property-search ${CS}><d:property-search><d:prop><c:calendar-home-set/></d:prop><d:match>/calendars/alice</d:match></d:property-search><d:prop><c:calendar-home-set/></d:prop></d:principal-property-search>`,
+        });
+        expect(Object.keys(props(res))).toEqual(['/dav/principals/alice/']);
+    });
+
+    it('finds other users with calendarserver-principal-search and keeps the limit', async () => {
+        const {provider, request} = setup();
+        provider.addUser({id: 'bobby', username: 'bobby', password: 'pw', displayName: 'Bobby', addresses: ['bobby@example.com']});
+        const body = (limit: string) =>
+            `<cs:calendarserver-principal-search ${CS} context="attendee"><cs:search-token>bob</cs:search-token><cs:limit><cs:nresults>${limit}</cs:nresults></cs:limit>${PROPS}</cs:calendarserver-principal-search>`;
+        expect(Object.keys(props(await request('REPORT', '/dav/principals/', {body: body('50')}))).sort()).toEqual(['/dav/principals/bob/', '/dav/principals/bobby/']);
+        expect(Object.keys(props(await request('REPORT', '/dav/principals/', {body: body('1')})))).toHaveLength(1);
+    });
+
+    it('needs every token of calendarserver-principal-search by default', async () => {
+        const {request} = setup();
+        const res = await request('REPORT', '/dav/principals/', {
+            body: `<cs:calendarserver-principal-search ${CS}><cs:search-token>bob</cs:search-token><cs:search-token>nobody</cs:search-token>${PROPS}</cs:calendarserver-principal-search>`,
+        });
+        expect(Object.keys(props(res))).toEqual([]);
+    });
+});
+
 describe('objects', () => {
     const url = '/dav/calendars/alice/personal/e1.ics';
     const event = ics('VEVENT', 'e1', 'DTSTART:20260310T100000Z', 'DTEND:20260310T110000Z', 'SUMMARY:One');

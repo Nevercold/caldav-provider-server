@@ -1,5 +1,6 @@
 import {deleteCalendar, mkcalendar, proppatchCollection} from './collections.ts';
-import {Context, quoteEtag, type Resource, unquoteEtag} from './context.ts';
+import {Context, notificationName, quoteEtag, type Resource, unquoteEtag} from './context.ts';
+import {handleInviteReply, handleShare, notificationBody, notificationEtag} from './sharing.ts';
 import {CalDavError} from './errors.ts';
 import {type Component, IcsError, inspectObject, parseIcs} from './ical.ts';
 import {allPropNames, propResponse} from './props.ts';
@@ -59,13 +60,28 @@ export async function childResources(ctx: Context, r: Resource): Promise<Resourc
             return (await ctx.inboxItems()).map((object) => ({kind: 'inbox-item', name: object.name, object}));
         case 'principal':
             return ctx.provider.delegates ? [{kind: 'proxy-group', write: false}, {kind: 'proxy-group', write: true}] : [];
+        case 'notifications':
+            return (await ctx.invitations()).map((invitation) => ({kind: 'notification', name: notificationName(invitation), invitation}));
         default:
             return [];
     }
 }
 
 function exists(r: Resource): boolean {
+    if (r.kind === 'notification') return !!r.invitation;
     return !((r.kind === 'object' || r.kind === 'inbox-item') && !r.object);
+}
+
+/** POST: sharing on calendars and the calendar home, scheduling on the outbox. */
+async function post(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    const r = await ctx.resolve(path);
+    if (r.kind === 'calendar' || r.kind === 'home') {
+        const root = parseBody(req);
+        if (r.kind === 'calendar' && is(root, NS.CS, 'share')) return handleShare(ctx, r, root!);
+        if (r.kind === 'home' && is(root, NS.CS, 'invite-reply')) return handleInviteReply(ctx, root!);
+        throw new CalDavError(400, 'unsupported POST body');
+    }
+    return handleOutboxPost(ctx, req, path);
 }
 
 async function propfind(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
@@ -114,6 +130,15 @@ function objectHeaders(ctx: Context, object: CalendarObject): Record<string, str
 
 async function get(ctx: Context, path: string, head: boolean): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
+    if (r.kind === 'notification') {
+        if (!r.invitation) throw CalDavError.notFound();
+        const body = notificationBody(ctx, r.invitation);
+        return {
+            status: 200,
+            headers: {'Content-Type': 'application/xml; charset=utf-8', ETag: quoteEtag(notificationEtag(r.invitation))},
+            body: head ? undefined : body,
+        };
+    }
     if (r.kind !== 'object' && r.kind !== 'inbox-item') {
         throw new CalDavError(405, 'GET is only supported on calendar objects');
     }
@@ -214,6 +239,13 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
         const s = ctx.provider.scheduling!;
         if (!s.deleteInboxItem || !ctx.writable) throw CalDavError.forbidden('inbox is read-only');
         await s.deleteInboxItem(ctx.principal, r.name);
+        return {status: 204, headers: {}};
+    }
+    if (r.kind === 'notification') {
+        if (!r.invitation) throw CalDavError.notFound();
+        const dismiss = ctx.provider.sharing?.dismissInvitation;
+        if (!dismiss || !ctx.writable) throw CalDavError.forbidden('notifications cannot be deleted');
+        await dismiss(ctx.principal, r.invitation.id);
         return {status: 204, headers: {}};
     }
     if (r.kind === 'calendar') return deleteCalendar(ctx, r);
@@ -347,6 +379,7 @@ function davHeader(provider: CalDavProvider<never>): string {
         'calendar-access',
         ...(provider.scheduling ? ['calendar-auto-schedule'] : []),
         ...(provider.createCalendar ? ['extended-mkcol'] : []),
+        ...(provider.sharing ? ['calendarserver-sharing'] : []),
     ].join(', ');
 }
 
@@ -359,7 +392,7 @@ async function contextFor<P extends Principal>(provider: CalDavProvider<P>, base
     if (!provider.delegations) return ctx;
     const segs = ctx.segments(path);
     const owner = segs?.[1];
-    if (!segs || owner === undefined || owner === user.id || !['calendars', 'inbox', 'outbox', 'principals'].includes(segs[0]!)) return ctx;
+    if (!segs || owner === undefined || owner === user.id || !['calendars', 'inbox', 'outbox', 'principals', 'notifications'].includes(segs[0]!)) return ctx;
     const delegation = (await ctx.delegations()).find((d) => d.principal.id === owner);
     return delegation ? new Context(provider, base, delegation.principal, user, delegation.write) : ctx;
 }
@@ -419,7 +452,7 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                     res = await del(ctx, req, path);
                     break;
                 case 'POST':
-                    res = await handleOutboxPost(ctx, req, path);
+                    res = await post(ctx, req, path);
                     break;
                 case 'MOVE':
                     res = await move(ctx, req, path);

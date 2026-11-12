@@ -123,6 +123,7 @@ becomes a 500 and is passed to `onError`.
 | `getPrincipal(principal, id)`               | no       | another user by id, for a `PROPFIND` on their principal URL     |
 | `delegations(user)`                         | no       | whose calendars the user may use "on behalf of", see below      |
 | `delegates(principal)`, `setDelegates(…)`   | no       | the principal's delegates, shown and changed by clients         |
+| `sharing`                                   | no       | sharing calendars from the client (Apple Calendar), see below   |
 
 ### Principal
 
@@ -351,6 +352,37 @@ async delegations(user) {
   `calendar-proxy-write/`, whose `group-member-set` lists the delegates. With `setDelegates(principal, write, ids)` the
   client can change them (PROPPATCH of `group-member-set`).
 
+### Sharing
+
+Calendars shared in your backend simply show up in `listCalendars` of every member. To let users share from Apple
+Calendar too (CalendarServer's sharing model: "Share Calendar…", invitations, accept/decline), add a `sharing`
+provider:
+
+```ts
+const sharing: SharingProvider<User> = {
+    async sharees(user, calendar) {
+        return db.shares(calendar.id).map(s => ({address: `mailto:${s.email}`, displayName: s.name, access: s.access, status: s.status}));
+    },
+    async share(user, calendar, {set, remove}) {
+        // invite, change access, remove; throw CalDavError for addresses you can't share with
+    },
+    async invitations(user) {
+        // invitations to the user: {id, owner, calendarId, address, access, status, summary?}
+    },
+    async replyToInvitation(user, id, accept) {
+        // return the id the calendar has in listCalendars(user) once accepted
+    },
+    async dismissInvitation(user, id) {},
+};
+```
+
+- Mark calendars in `listCalendars`: `shared: true` on the owner's shared calendar, `sharedBy` (the owner) on a
+  calendar the user sees through a share. Apple shows them accordingly; `sharedBy` calendars can't be shared further.
+- The owner POSTs `CS:share` to the calendar; the calendar's `CS:invite` lists the sharees with their status.
+- Invitations appear in the user's notification collection (`/notifications/<id>/`, announced as
+  `CS:notification-URL`) with `sync-collection` support. The invitee POSTs `CS:invite-reply` to the calendar home,
+  which calls `replyToInvitation`; `DELETE` of a notification calls `dismissInvitation`.
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -394,7 +426,8 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - Locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
   `putObject` and sends no invitations)
 - Other users' calendars: their principal URL answers with `getPrincipal`, their calendar home 403
-- Sharing invitations (`CS:invite`)
+- Publishing calendars (`CS:can-be-published`, webcal) and the WebDAV resource sharing draft (`share-resource`,
+  draft-pot-webdav-resource-sharing); sharing follows CalendarServer's model that Apple Calendar uses
 - Attachments (managed attachments, RFC 8607)
 
 ## Example server

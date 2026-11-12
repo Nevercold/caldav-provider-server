@@ -1,6 +1,6 @@
 import type {CalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
-import type {Calendar, CalDavProvider, CalendarObject, Delegation, Principal, PrincipalSearchResult} from './types.ts';
+import type {Calendar, CalDavProvider, CalendarObject, Delegation, Invitation, Principal, PrincipalSearchResult} from './types.ts';
 
 export type Resource =
     | {kind: 'root'}
@@ -15,7 +15,10 @@ export type Resource =
     | {kind: 'object'; calendar: Calendar; name: string; object: CalendarObject | null}
     | {kind: 'inbox'}
     | {kind: 'inbox-item'; name: string; object: CalendarObject | null}
-    | {kind: 'outbox'};
+    | {kind: 'outbox'}
+    /** CalendarServer notification collection: invitations to shared calendars. */
+    | {kind: 'notifications'}
+    | {kind: 'notification'; name: string; invitation: Invitation | null};
 
 const SYNC_PREFIX = 'http://caldav-provider-server/ns/sync/';
 
@@ -71,6 +74,7 @@ export class Context<P extends Principal = Principal> {
     calendarData?: CalendarDataRequest;
 
     private delegationsPromise?: Promise<Delegation<P>[]>;
+    private invitationsPromise?: Promise<Invitation[]>;
 
     constructor(provider: CalDavProvider<P>, base: string, principal: P, user: P = principal, writable = true) {
         this.provider = provider;
@@ -162,6 +166,17 @@ export class Context<P extends Principal = Principal> {
         return `${this.base}/inbox/${this.seg(this.principal.id)}/`;
     }
 
+    notificationsHref(): string {
+        return `${this.base}/notifications/${this.seg(this.principal.id)}/`;
+    }
+
+    /** Pending and answered invitations to shared calendars. */
+    invitations(): Promise<Invitation[]> {
+        const s = this.provider.sharing;
+        this.invitationsPromise ??= s?.invitations ? s.invitations(this.principal) : Promise.resolve([]);
+        return this.invitationsPromise;
+    }
+
     outboxHref(): string {
         return `${this.base}/outbox/${this.seg(this.principal.id)}/`;
     }
@@ -190,6 +205,10 @@ export class Context<P extends Principal = Principal> {
                 return `${this.inboxHref()}${this.seg(r.name)}`;
             case 'outbox':
                 return this.outboxHref();
+            case 'notifications':
+                return this.notificationsHref();
+            case 'notification':
+                return `${this.notificationsHref()}${this.seg(r.name)}`;
         }
     }
 
@@ -217,7 +236,7 @@ export class Context<P extends Principal = Principal> {
         if (!segs) throw CalDavError.notFound();
         const [area, owner, ...rest] = segs;
         if (!area) return {kind: 'root'};
-        if (!['principals', 'calendars', 'inbox', 'outbox'].includes(area)) throw CalDavError.notFound();
+        if (!['principals', 'calendars', 'inbox', 'outbox', 'notifications'].includes(area)) throw CalDavError.notFound();
         if (owner === undefined) {
             if (area === 'principals') return {kind: 'principals'};
             throw CalDavError.notFound();
@@ -244,6 +263,13 @@ export class Context<P extends Principal = Principal> {
             const group = rest.length === 1 ? /^calendar-proxy-(read|write)$/.exec(rest[0]!) : null;
             if (!group || !this.provider.delegates) throw CalDavError.notFound();
             return {kind: 'proxy-group', write: group[1] === 'write'};
+        }
+        if (area === 'notifications') {
+            if (!this.provider.sharing?.invitations || rest.length > 1) throw CalDavError.notFound();
+            if (!rest.length) return {kind: 'notifications'};
+            const name = rest[0]!;
+            const invitation = loadObject ? ((await this.invitations()).find((i) => notificationName(i) === name) ?? null) : null;
+            return {kind: 'notification', name, invitation};
         }
         if (area === 'outbox') {
             if (rest.length || !this.scheduling) throw CalDavError.notFound();
@@ -282,6 +308,9 @@ export class Context<P extends Principal = Principal> {
         }
     }
 }
+
+/** Resource name of an invitation in the notification collection. */
+export const notificationName = (i: Invitation): string => `${i.id}.xml`;
 
 export function normalizeAddress(a: string): string {
     const t = a.trim();

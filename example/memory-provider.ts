@@ -7,6 +7,7 @@ import {
     type Changes,
     type Delegate,
     type Delegation,
+    type Invitation,
     type MoveObjectInput,
     type NewCalendar,
     type Principal,
@@ -16,6 +17,9 @@ import {
     type PutObjectResult,
     type ScheduleStatus,
     type SchedulingProvider,
+    type ShareAccess,
+    type ShareStatus,
+    type SharingProvider,
 } from '../src/index.ts';
 
 export interface User extends Principal {
@@ -31,6 +35,20 @@ interface StoredCalendar {
     members: Map<string, {readOnly: boolean}>;
     /** Version of the last change of the calendar's properties. */
     touched: number;
+    /** The first user with write access; only they can share it from a client. */
+    owner?: string;
+    /** Shares made from a client, by address. */
+    shares: Map<string, ShareEntry>;
+}
+
+interface ShareEntry {
+    id: string;
+    displayName?: string;
+    summary?: string;
+    access: ShareAccess;
+    status: ShareStatus;
+    dismissed: boolean;
+    created: Date;
 }
 
 /**
@@ -61,6 +79,8 @@ export class MemoryProvider implements CalDavProvider<User> {
             log: [],
             touched: 0,
             members: new Map(Object.entries(members).map(([id, access]) => [id, {readOnly: access === 'read'}])),
+            owner: Object.entries(members).find(([, access]) => access === 'write')?.[0],
+            shares: new Map(),
         });
         return this;
     }
@@ -92,8 +112,101 @@ export class MemoryProvider implements CalDavProvider<User> {
     }
 
     private toCalendar(cal: StoredCalendar, userId: string): Calendar {
-        return {...cal.meta, syncToken: String(this.currentVersion(cal)), readOnly: cal.members.get(userId)!.readOnly};
+        const calendar: Calendar = {...cal.meta, syncToken: String(this.currentVersion(cal)), readOnly: cal.members.get(userId)!.readOnly};
+        const user = this.users.get(userId);
+        const owner = cal.owner ? this.users.get(cal.owner) : undefined;
+        if (cal.owner === userId && cal.shares.size) calendar.shared = true;
+        // Joined through a share from a client.
+        if (owner && owner.id !== userId && user && this.shareOf(cal, user)?.status === 'accepted') {
+            calendar.sharedBy = this.summary(owner);
+        }
+        return calendar;
     }
+
+    private summary(u: User): PrincipalSearchResult {
+        return {id: u.id, displayName: u.displayName, addresses: u.addresses ?? []};
+    }
+
+    private shareOf(cal: StoredCalendar, user: User): ShareEntry | undefined {
+        const mine = new Set((user.addresses ?? []).map((a) => `mailto:${a.replace(/^mailto:/i, '').toLowerCase()}`));
+        for (const [address, entry] of cal.shares) if (mine.has(address)) return entry;
+        return undefined;
+    }
+
+    readonly sharing: SharingProvider<User> = {
+        sharees: async (principal, calendar) => {
+            const cal = this.stored(principal, calendar);
+            return [...cal.shares].map(([address, e]) => ({address, displayName: e.displayName, access: e.access, status: e.status}));
+        },
+        share: async (principal, calendar, changes) => {
+            const cal = this.stored(principal, calendar);
+            if (cal.owner !== principal.id) throw CalDavError.forbidden('only the owner can share');
+            for (const s of changes.set) {
+                const user = this.userByAddress(s.address);
+                if (!user) throw new CalDavError(409, `unknown user ${s.address}`);
+                if (user.id === principal.id) continue;
+                const entry = cal.shares.get(s.address);
+                if (entry) {
+                    entry.access = s.access;
+                    if (entry.status === 'accepted') cal.members.set(user.id, {readOnly: s.access === 'read'});
+                } else {
+                    cal.shares.set(s.address, {
+                        id: crypto.randomUUID(),
+                        displayName: s.displayName,
+                        summary: s.summary,
+                        access: s.access,
+                        status: 'pending',
+                        dismissed: false,
+                        created: new Date(),
+                    });
+                }
+            }
+            for (const address of changes.remove) {
+                const user = this.userByAddress(address);
+                if (cal.shares.delete(address) && user) cal.members.delete(user.id);
+            }
+            cal.touched = ++this.version;
+        },
+        invitations: async (principal) => {
+            const out: Invitation[] = [];
+            for (const cal of this.calendars.values()) {
+                const entry = this.shareOf(cal, principal);
+                const owner = cal.owner ? this.users.get(cal.owner) : undefined;
+                if (!entry || entry.dismissed || !owner) continue;
+                const address = [...cal.shares].find(([, e]) => e === entry)![0];
+                out.push({
+                    id: entry.id,
+                    owner: this.summary(owner),
+                    calendarId: cal.meta.id,
+                    address,
+                    access: entry.access,
+                    status: entry.status,
+                    summary: entry.summary,
+                    components: cal.meta.components,
+                    created: entry.created,
+                });
+            }
+            return out;
+        },
+        replyToInvitation: async (principal, id, accept) => {
+            for (const cal of this.calendars.values()) {
+                const entry = this.shareOf(cal, principal);
+                if (entry?.id !== id) continue;
+                entry.status = accept ? 'accepted' : 'declined';
+                if (accept) cal.members.set(principal.id, {readOnly: entry.access === 'read'});
+                else cal.members.delete(principal.id);
+                cal.touched = ++this.version;
+                return accept ? cal.meta.id : null;
+            }
+            throw CalDavError.notFound();
+        },
+        dismissInvitation: async (principal, id) => {
+            for (const cal of this.calendars.values()) {
+                const entry = this.shareOf(cal, principal);
+                if (entry?.id === id) entry.dismissed = true;
+            }
+        },
+    };
 
     async authenticate(username: string, password: string): Promise<User | null> {
         const user = [...this.users.values()].find((u) => u.username === username);

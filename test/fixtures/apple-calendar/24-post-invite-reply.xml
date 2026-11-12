@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<C:invite-reply xmlns:C="http://calendarserver.org/ns/">
+  <A:href xmlns:A="DAV:">urn:x-uid:10000000-0000-0000-0000-000000000002</A:href>
+  <C:invite-accepted/>
+  <C:hosturl>
+    <A:href xmlns:A="DAV:">/calendars/__uids__/10000000-0000-0000-0000-000000000001/A1DDC58B-651E-4B1C-872A-C6588CA09ADB</A:href>
+  </C:hosturl>
+  <C:in-reply-to>d2683fa9-7a50-4390-82bb-cbcea5e0fa86</C:in-reply-to>
+  <C:summary>to share</C:summary>
+</C:invite-reply>

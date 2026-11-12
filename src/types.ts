@@ -42,6 +42,63 @@ export interface Calendar {
      * (schedule-calendar-transp, RFC 6638 9.1). Default false.
      */
     transparent?: boolean;
+    /** The user's own calendar, shared with others (Apple shows it as shared). */
+    shared?: boolean;
+    /** Somebody else's calendar the user sees through a share. Can't be shared further. */
+    sharedBy?: PrincipalSearchResult;
+}
+
+export type ShareAccess = 'read' | 'read-write';
+export type ShareStatus = 'pending' | 'accepted' | 'declined';
+
+/** Someone a calendar is shared with. */
+export interface Sharee {
+    /** Calendar user address (`mailto:…`). */
+    address: string;
+    displayName?: string;
+    access: ShareAccess;
+    status: ShareStatus;
+}
+
+/** What the owner changes in a share dialog (CalendarServer `CS:share`). */
+export interface ShareChanges {
+    /** Invite these or change their access. */
+    set: {address: string; displayName?: string; summary?: string; access: ShareAccess}[];
+    /** Addresses to remove from the share. */
+    remove: string[];
+}
+
+/** An invitation to a shared calendar, shown to the invitee as a notification. */
+export interface Invitation {
+    /** Stable id; becomes the notification's name and the reply's `in-reply-to`. */
+    id: string;
+    owner: PrincipalSearchResult;
+    /** Id of the shared calendar among the owner's calendars. */
+    calendarId: string;
+    /** The invitee's own address this invitation was sent to. */
+    address: string;
+    access: ShareAccess;
+    status: ShareStatus;
+    summary?: string;
+    components?: ComponentType[];
+    created?: Date;
+}
+
+/** Calendar sharing as Apple Calendar does it (CalendarServer caldav-sharing). */
+export interface SharingProvider<P extends Principal = Principal> {
+    /** People the principal's calendar is shared with, for the `CS:invite` property. */
+    sharees(principal: P, calendar: Calendar): Promise<Sharee[]>;
+    /** Invite, change or remove sharees. Throw `CalDavError` for addresses you can't share with. */
+    share(principal: P, calendar: Calendar, changes: ShareChanges): Promise<void>;
+    /** Invitations to the principal. Without it, invitations have to be accepted elsewhere. */
+    invitations?(principal: P): Promise<Invitation[]>;
+    /**
+     * The invitee accepts or declines. Return the id of the calendar the share now appears
+     * as in `listCalendars` (accepted), or null.
+     */
+    replyToInvitation?(principal: P, invitationId: string, accept: boolean): Promise<string | null>;
+    /** The invitee dismissed the notification (DELETE). */
+    dismissInvitation?(principal: P, invitationId: string): Promise<void>;
 }
 
 export interface CalendarObject {
@@ -288,6 +345,8 @@ export interface CalDavProvider<P extends Principal = Principal> {
     deleteCalendar?(principal: P, calendar: Calendar): Promise<void>;
     /** Enables scheduling (RFC 6638). */
     scheduling?: SchedulingProvider<P>;
+    /** Enables sharing calendars from the client (Apple Calendar). */
+    sharing?: SharingProvider<P>;
     /**
      * Other calendar users the principal may find, e.g. to invite them
      * (principal-property-search, Apple's calendarserver-principal-search).

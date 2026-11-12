@@ -1,4 +1,5 @@
-import {type Context, homeSyncToken, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
+import {notificationEtag, notificationsSyncToken, parseNotificationsSyncToken} from './sharing.ts';
+import {type Context, homeSyncToken, notificationName, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
 import {parseCalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
@@ -101,6 +102,7 @@ async function syncCollection(ctx: Context, root: XmlElement, path: string): Pro
     const props = requestedProps(root);
     const tokenUri = textOf(child(root, NS.DAV, 'sync-token'));
     if (r.kind === 'home') return syncHome(ctx, tokenUri, props);
+    if (r.kind === 'notifications') return syncNotifications(ctx, tokenUri, props);
     if (r.kind !== 'calendar') throw CalDavError.dav(403, 'supported-report', 'sync-collection only works on calendars');
     const calendar = r.calendar;
 
@@ -118,6 +120,30 @@ async function syncCollection(ctx: Context, root: XmlElement, path: string): Pro
         for (const name of changes.deleted) responses.push(statusResponse(ctx.objectHref(calendar, name), 'HTTP/1.1 404 Not Found'));
     }
     return multistatus(responses, d('sync-token', syncTokenUri(newToken)));
+}
+
+/** sync-collection on the notification collection, stateless like the calendar home's. */
+async function syncNotifications(ctx: Context, tokenUri: string, props: QName[]): Promise<CalDavResponse> {
+    const list = await ctx.invitations();
+    let previous: Record<string, string> = {};
+    if (tokenUri) {
+        const token = parseSyncTokenUri(tokenUri);
+        const parsed = token === null ? null : parseNotificationsSyncToken(token);
+        if (!parsed) throw CalDavError.dav(403, 'valid-sync-token', 'unknown sync token, do a full sync');
+        previous = parsed;
+    }
+    const responses: XNode[] = [];
+    for (const invitation of list) {
+        const name = notificationName(invitation);
+        if (previous[name] !== notificationEtag(invitation)) {
+            responses.push(await propResponse(ctx, {kind: 'notification', name, invitation}, props));
+        }
+    }
+    const names = new Set(list.map(notificationName));
+    for (const name of Object.keys(previous)) {
+        if (!names.has(name)) responses.push(statusResponse(`${ctx.notificationsHref()}${encodeURIComponent(name)}`, 'HTTP/1.1 404 Not Found'));
+    }
+    return multistatus(responses, d('sync-token', syncTokenUri(notificationsSyncToken(list))));
 }
 
 /** sync-collection on the calendar home: reports added, changed and removed calendars. */

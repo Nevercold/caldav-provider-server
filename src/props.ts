@@ -1,5 +1,6 @@
 import {applyCalendarData} from './calendardata.ts';
 import {floatingZoneOf} from './freebusy.ts';
+import {inviteProperty, notificationEtag, notificationsSyncToken} from './sharing.ts';
 import {type Context, homeSyncToken, normalizeAddresses, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
 import type {Calendar, PrincipalSearchResult} from './types.ts';
@@ -100,7 +101,13 @@ def(NS.DAV, 'resourcetype', (_ctx, r) => {
         case 'proxy-group':
             return ok(d('principal'), el(NS.CS, r.write ? 'calendar-proxy-write' : 'calendar-proxy-read'));
         case 'calendar':
-            return ok(d('collection'), cal('calendar'));
+            return ok(
+                d('collection'),
+                cal('calendar'),
+                r.calendar.sharedBy ? el(NS.CS, 'shared') : r.calendar.shared ? el(NS.CS, 'shared-owner') : null,
+            );
+        case 'notifications':
+            return ok(d('collection'), el(NS.CS, 'notification'));
         case 'inbox':
             return ok(d('collection'), cal('schedule-inbox'));
         case 'outbox':
@@ -153,7 +160,12 @@ for (const write of [false, true]) {
         return owners.map((dl) => href(`${ctx.principalsHref()}${encodeURIComponent(dl.principal.id)}/`));
     });
 }
-def(NS.DAV, 'owner', (ctx, r) => (r.kind === 'root' || r.kind === 'principals' ? undefined : ok(href(ctx.principalHref()))));
+def(NS.DAV, 'owner', (ctx, r) => {
+    if (r.kind === 'root' || r.kind === 'principals') return undefined;
+    // A calendar shared with the user belongs to whoever shared it.
+    const by = r.kind === 'calendar' ? r.calendar.sharedBy : undefined;
+    return ok(href(by ? `${ctx.principalsHref()}${encodeURIComponent(by.id)}/` : ctx.principalHref()));
+});
 def(NS.DAV, 'principal-collection-set', (ctx) => ok(href(ctx.principalsHref())));
 def(NS.DAV, 'current-user-privilege-set', (ctx, r) => privilegeSet(ctx, r));
 
@@ -209,6 +221,7 @@ def(NS.DAV, 'supported-report-set', (ctx, r) => {
         case 'inbox':
             return ok(report(NS.CALDAV, 'calendar-query'), report(NS.CALDAV, 'calendar-multiget'));
         case 'home':
+        case 'notifications':
             return ok(report(NS.DAV, 'sync-collection'));
         case 'principal':
         case 'proxy-group':
@@ -226,16 +239,19 @@ def(NS.DAV, 'supported-report-set', (ctx, r) => {
 
 def(NS.DAV, 'sync-token', async (ctx, r) => {
     if (r.kind === 'home') return ok(syncTokenUri(homeSyncToken(await ctx.calendars())));
+    if (r.kind === 'notifications') return ok(syncTokenUri(notificationsSyncToken(await ctx.invitations())));
     const c = calendarOf(r);
     return c ? ok(syncTokenUri(c.syncToken)) : undefined;
 });
 
 def(NS.DAV, 'getetag', (_ctx, r) => {
     if ((r.kind === 'object' || r.kind === 'inbox-item') && r.object) return ok(quoteEtag(r.object.etag));
+    if (r.kind === 'notification' && r.invitation) return ok(quoteEtag(notificationEtag(r.invitation)));
     return undefined;
 });
 
 def(NS.DAV, 'getcontenttype', (_ctx, r) => {
+    if (r.kind === 'notification' && r.invitation) return ok('application/xml; charset=utf-8');
     if ((r.kind === 'object' || r.kind === 'inbox-item') && r.object) return ok(contentType(r.object.ics));
     return undefined;
 });
@@ -324,10 +340,29 @@ def(NS.CALDAV, 'schedule-tag', (ctx, r) => {
 
 // --- CalendarServer / Apple extensions ---
 
-def(NS.CS, 'getctag', (_ctx, r) => {
+def(NS.CS, 'getctag', async (ctx, r) => {
+    if (r.kind === 'notifications') return ok(notificationsSyncToken(await ctx.invitations()));
     const c = calendarOf(r);
     return c ? ok(c.syncToken) : undefined;
 });
+
+// --- Sharing (CalendarServer caldav-sharing) ---
+
+def(NS.CS, 'invite', (ctx, r) => inviteProperty(ctx, r));
+
+def(NS.CS, 'allowed-sharing-modes', (ctx, r) => {
+    if (r.kind !== 'calendar') return undefined;
+    const canShare = !!ctx.provider.sharing && ctx.writable && !r.calendar.sharedBy;
+    return ok(canShare ? el(NS.CS, 'can-be-shared') : null);
+});
+
+def(NS.CS, 'notification-URL', (ctx, r) =>
+    r.kind === 'principal' && ctx.provider.sharing?.invitations ? ok(href(ctx.notificationsHref())) : undefined,
+);
+
+def(NS.CS, 'notificationtype', (_ctx, r) =>
+    r.kind === 'notification' && r.invitation ? ok({ns: NS.CS, name: 'invite-notification', attrs: {'shared-type': 'calendar'}, children: []}) : undefined,
+);
 
 def(NS.CS, 'email-address-set', (ctx, r) => {
     if (r.kind !== 'principal') return undefined;

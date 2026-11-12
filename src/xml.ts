@@ -1,4 +1,4 @@
-import {DOMParser, type Element as XmlElement} from '@xmldom/xmldom';
+import {DOMParser, type Element as XmlElement, XMLSerializer} from '@xmldom/xmldom';
 
 export type {XmlElement};
 
@@ -80,6 +80,22 @@ export interface XNode {
     name: string;
     attrs?: Record<string, string>;
     children?: (XNode | string)[];
+    /** Already serialized XML written as it is (stored property values); `ns` and `name` are ignored. */
+    raw?: string;
+}
+
+/** A node of serialized XML, e.g. a stored property value with its own namespace declarations. */
+export const rawXml = (xml: string): XNode => ({ns: '', name: '', raw: xml});
+
+/** The children of an element as XML text, each element with the namespace declarations it needs. */
+export function innerXml(el: XmlElement): string {
+    const serializer = new XMLSerializer();
+    let out = '';
+    for (let n = el.firstChild; n; n = n.nextSibling) {
+        if (n.nodeType === 1) out += serializer.serializeToString(n);
+        else if (n.nodeType === 3 || n.nodeType === 4) out += escapeXml(n.nodeValue ?? '');
+    }
+    return out;
 }
 
 export type Kid = XNode | string | null | undefined | false | (XNode | string)[];
@@ -115,6 +131,7 @@ export function serialize(root: XNode): string {
     const prefixes = new Map<string, string>();
     let generated = 0;
     const collect = (n: XNode) => {
+        if (n.raw !== undefined) return;
         if (n.ns && !prefixes.has(n.ns)) prefixes.set(n.ns, PREFIXES[n.ns] ?? `x${generated++}`);
         for (const c of n.children ?? []) if (typeof c !== 'string') collect(c);
     };
@@ -122,6 +139,7 @@ export function serialize(root: XNode): string {
 
     const tag = (n: XNode) => (n.ns ? `${prefixes.get(n.ns)}:${n.name}` : n.name);
     const write = (n: XNode, isRoot: boolean): string => {
+        if (n.raw !== undefined) return n.raw;
         let attrs = '';
         if (isRoot) for (const [uri, p] of prefixes) attrs += ` xmlns:${p}="${escapeXml(uri)}"`;
         for (const [k, v] of Object.entries(n.attrs ?? {})) attrs += ` ${k}="${escapeXml(v)}"`;

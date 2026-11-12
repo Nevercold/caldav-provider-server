@@ -286,6 +286,18 @@ export interface PrincipalSearchQuery {
 }
 
 /**
+ * Storage of properties clients set and the server doesn't know itself ("dead properties",
+ * RFC 4918 4.2), e.g. Apple's default alarms on the calendar home. Keys are
+ * `{namespace}name`, values the property's content as XML.
+ */
+export interface PropertyStore<P extends Principal = Principal> {
+    /** All stored properties of a resource, by path (e.g. `/dav/calendars/jane/`). */
+    get(principal: P, path: string): Promise<Record<string, string>>;
+    /** Set (string) or remove (null) properties of a resource, all or none. */
+    set(principal: P, path: string, changes: Record<string, string | null>): Promise<void>;
+}
+
+/**
  * Publishing a calendar as a read-only feed (Apple's "Public Calendar", CalendarServer
  * CS:publish-calendar). The URL can be anything, e.g. a feed you already serve elsewhere.
  */
@@ -424,6 +436,13 @@ export interface CalDavProvider<P extends Principal = Principal> {
     scheduling?: SchedulingProvider<P>;
     /** Enables sharing calendars from the client (Apple Calendar). */
     sharing?: SharingProvider<P>;
+    /**
+     * Stores properties the server doesn't know (PROPPATCH on the calendar home, calendars,
+     * objects and the principal). Without it, unknown properties answer 403.
+     */
+    properties?: PropertyStore<P>;
+    /** The user renames themselves (PROPPATCH of displayname on their principal). Without it, 403. */
+    updatePrincipal?(principal: P, changes: {displayName: string | null}): Promise<void>;
     /** Enables publishing calendars as public feeds (Apple's "Public Calendar"). */
     publishing?: PublishingProvider<P>;
     /** Enables managed attachments (RFC 8607). */

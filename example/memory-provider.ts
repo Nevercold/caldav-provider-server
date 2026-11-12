@@ -16,6 +16,7 @@ import {
     type PrincipalSearchQuery,
     type PrincipalSearchResult,
     processSchedulingMessage,
+    type PropertyStore,
     type PublishingProvider,
     type PutObjectResult,
     type ScheduleStatus,
@@ -134,6 +135,26 @@ export class MemoryProvider implements CalDavProvider<User> {
         const mine = new Set((user.addresses ?? []).map((a) => `mailto:${a.replace(/^mailto:/i, '').toLowerCase()}`));
         for (const [address, entry] of cal.shares) if (mine.has(address)) return entry;
         return undefined;
+    }
+
+    /** Dead properties by resource path. */
+    private readonly deadProperties = new Map<string, Record<string, string>>();
+
+    readonly properties: PropertyStore<User> = {
+        get: async (_principal, path) => ({...this.deadProperties.get(path)}),
+        set: async (_principal, path, changes) => {
+            const current = {...this.deadProperties.get(path)};
+            for (const [key, value] of Object.entries(changes)) {
+                if (value === null) delete current[key];
+                else current[key] = value;
+            }
+            this.deadProperties.set(path, current);
+        },
+    };
+
+    async updatePrincipal(principal: User, changes: {displayName: string | null}): Promise<void> {
+        const user = this.users.get(principal.id)!;
+        user.displayName = changes.displayName ?? undefined;
     }
 
     /** Where published feeds are served, see `publishing.resolveFeed`. */

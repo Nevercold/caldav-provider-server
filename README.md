@@ -125,6 +125,8 @@ becomes a 500 and is passed to `onError`.
 | `delegations(user)`                         | no       | whose calendars the user may use "on behalf of", see below      |
 | `delegates(principal)`, `setDelegates(…)`   | no       | the principal's delegates, shown and changed by clients         |
 | `sharing`                                   | no       | sharing calendars from the client (Apple Calendar), see below   |
+| `properties`                                | no       | storage for properties clients set (e.g. default alarms)        |
+| `updatePrincipal(principal, changes)`       | no       | the user renames themselves (`displayname` of the principal)    |
 | `publishing`                                | no       | public read-only feeds ("Public Calendar"), see below           |
 | `attachments`                               | no       | managed attachments (RFC 8607), see below                       |
 | `locks`                                     | no       | `LOCK` / `UNLOCK` storage, see below                            |
@@ -399,6 +401,29 @@ provider: `POST` of `DAV:share-resource` maps onto `share` (`no-access` removes 
 `DAV:share-access` and `DAV:invite`. Invitations of that draft's notification format are not sent; invitees answer
 through the CalendarServer notifications above or your own UI.
 
+### Other properties
+
+Clients also set properties the server doesn't know, e.g. Apple Calendar's default alarms on the calendar home
+(`default-alarm-vevent-date`, `default-alarm-vevent-datetime`), which it sends on every start. With a `properties`
+store they are kept and returned on the home, calendars, objects and the principal (WebDAV "dead properties"):
+
+```ts
+const properties: PropertyStore<User> = {
+    async get(user, path) {
+        return db.props.get(path) ?? {}; // {'{urn:ietf:params:xml:ns:caldav}default-alarm-vevent-date': 'BEGIN:VALARM…'}
+    },
+    async set(user, path, changes) {
+        await db.props.merge(path, changes); // a null value removes the property
+    },
+};
+```
+
+Values are the property's content as XML text, so nested elements keep their namespaces. Properties the server
+computes itself (`getetag`, `resourcetype`, …) stay protected (403). A `PROPPATCH` that mixes calendar properties and
+stored ones is checked as a whole, then `updateCalendar` and `set` are called in that order. Delete stored properties
+together with the resource if you like; the server doesn't. `updatePrincipal(principal, {displayName})` lets the user
+rename themselves.
+
 ### Publishing
 
 Apple Calendar's "Public Calendar" switch publishes a read-only feed (CalendarServer `CS:publish-calendar`). The
@@ -507,7 +532,6 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 
 ## What is not supported
 
-- `PROPPATCH` of anything but calendars
 - Changing ACLs: `DAV:acl`, `supported-privilege-set` and `acl-restrictions` are reported (the user's own privileges
   as one protected ACE), the `ACL` method answers 403; who may do what is up to the provider
 - Other users' calendars without a delegation: their principal URL answers with `getPrincipal`, their calendar

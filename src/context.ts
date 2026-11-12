@@ -75,6 +75,16 @@ export class Context<P extends Principal = Principal> {
     /** Scheme and host for absolute URLs, e.g. `https://cal.example.com` (attachment URLs). */
     origin = '';
 
+    private readonly storedProps = new Map<string, Promise<Record<string, string>>>();
+
+    /** Properties the provider stores for a resource (dead properties), by `{ns}name`. */
+    storedProperties(path: string): Promise<Record<string, string>> {
+        const store = this.provider.properties;
+        if (!store) return Promise.resolve({});
+        if (!this.storedProps.has(path)) this.storedProps.set(path, store.get(this.principal, path));
+        return this.storedProps.get(path)!;
+    }
+
     /** Default size limit of calendar objects, see `CalDavOptions.maxObjectSize`. */
     maxObjectSize?: number;
 

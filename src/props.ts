@@ -5,7 +5,7 @@ import {lockDiscovery, supportedLock} from './locks.ts';
 import {type Context, homeSyncToken, normalizeAddresses, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
 import type {Calendar, PrincipalSearchResult} from './types.ts';
-import {cal, d, el, type Kid, NS, type QName, qkey, type XNode} from './xml.ts';
+import {cal, d, el, type Kid, NS, type QName, qkey, rawXml, type XNode} from './xml.ts';
 
 export type PropResult = {status: 200; value: Kid[]} | {status: 403 | 404};
 
@@ -458,9 +458,30 @@ export async function getProp(ctx: Context, r: Resource, q: QName): Promise<Prop
         return value === undefined ? {status: 404} : {status: 200, value};
     }
     const getter = getters[qkey(q)];
-    if (!getter) return {status: 404};
+    if (!getter) {
+        if (!holdsStoredProperties(r)) return {status: 404};
+        const stored = (await ctx.storedProperties(ctx.href(r)))[qkey(q)];
+        return stored === undefined ? {status: 404} : {status: 200, value: [rawXml(stored)]};
+    }
     const value = await getter(ctx, r);
     return value === undefined ? {status: 404} : {status: 200, value};
+}
+
+/** A property the server computes itself; clients can't set it through the property store. */
+export const isLiveProperty = (q: QName): boolean => qkey(q) in getters;
+
+/** Resources that can have stored (dead) properties. */
+export function holdsStoredProperties(r: Resource): boolean {
+    return r.kind === 'home' || r.kind === 'calendar' || r.kind === 'principal' || (r.kind === 'object' && !!r.object);
+}
+
+/** Names of the stored properties of a resource, for allprop and propname. */
+async function storedNames(ctx: Context, r: Resource): Promise<QName[]> {
+    if (!ctx.provider.properties || !holdsStoredProperties(r)) return [];
+    return Object.keys(await ctx.storedProperties(ctx.href(r))).map((k) => {
+        const m = /^\{(.*)\}(.*)$/.exec(k);
+        return m ? {ns: m[1]!, name: m[2]!} : {ns: '', name: k};
+    });
 }
 
 /** Builds a DAV:response with one propstat per status. */
@@ -472,6 +493,7 @@ export async function propResponse(
 ): Promise<XNode> {
     const found: XNode[] = [];
     const missing: XNode[] = [];
+    if (mode !== 'prop') props = [...props, ...(await storedNames(ctx, r))];
     for (const q of props) {
         const result = await getProp(ctx, r, q);
         if (result.status === 200) found.push(el(q.ns, q.name, ...(mode === 'propname' ? [] : result.value)));

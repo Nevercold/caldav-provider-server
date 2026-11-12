@@ -42,8 +42,8 @@ describe('PROPPATCH', () => {
         provider.updateCalendar = async () => {
             called = true;
         };
-        const res = await request('PROPPATCH', CAL, {body: update(set('<d:displayname>Work</d:displayname><x:custom>1</x:custom>'))});
-        expect(propStatuses(res)).toEqual({displayname: 424, custom: 403});
+        const res = await request('PROPPATCH', CAL, {body: update(set('<d:displayname>Work</d:displayname><d:getetag>"1"</d:getetag>'))});
+        expect(propStatuses(res)).toEqual({displayname: 424, getetag: 403});
         expect(called).toBe(false);
     });
 

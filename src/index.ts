@@ -22,6 +22,7 @@ export type {
     Principal,
     PrincipalSearchQuery,
     PrincipalSearchResult,
+    PropertyStore,
     PublishingProvider,
     PutObjectInput,
     PutObjectResult,

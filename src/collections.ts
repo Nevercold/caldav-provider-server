@@ -2,7 +2,8 @@ import type {Context, Resource} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {type CalDavResponse, header, multistatus, parseBody, type ParsedRequest as CalDavRequest, xmlResponse} from './http.ts';
 import type {CalendarChanges, ComponentType, NewCalendar} from './types.ts';
-import {children, d, el, is, NS, type QName, qkey, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
+import {children, d, el, innerXml, is, NS, type QName, qkey, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
+import {holdsStoredProperties, isLiveProperty} from './props.ts';
 
 /*
  * Calendar collections: PROPPATCH (RFC 4918 9.2), MKCALENDAR (RFC 4791 5.3.1),
@@ -89,29 +90,55 @@ export async function proppatchCollection(ctx: Context, req: CalDavRequest, targ
     const ops = operations(root!);
     if (target.kind === 'proxy-group') return proppatchProxyGroup(ctx, target, ops);
     const editable = target.kind === 'calendar' && ctx.canEditCalendar(target.calendar);
+    const renamable = target.kind === 'principal' && !!ctx.provider.updatePrincipal && ctx.writable;
+    const store = ctx.provider.properties && holdsStoredProperties(target) && mayStore(ctx, target) ? ctx.provider.properties : undefined;
 
     const changes: CalendarChanges = {};
+    const principalChanges: {displayName?: string | null} = {};
+    const stored: Record<string, string | null> = {};
     const results = ops.map(({prop, remove}) => {
         const q = qnameOf(prop);
         const w = WRITABLE[qkey(q)];
-        if (!editable || !w) return {q, status: 403};
-        const value = remove ? null : w.parse(prop);
-        if (value === undefined) return {q, status: 409};
-        (changes as Record<string, unknown>)[w.field] = value;
+        if (editable && w) {
+            const value = remove ? null : w.parse(prop);
+            if (value === undefined) return {q, status: 409};
+            (changes as Record<string, unknown>)[w.field] = value;
+            return {q, status: 200};
+        }
+        if (renamable && is(prop, NS.DAV, 'displayname')) {
+            principalChanges.displayName = remove ? null : textOf(prop);
+            return {q, status: 200};
+        }
+        // Everything the server computes itself is protected (RFC 4918 9.2).
+        if (!store || isLiveProperty(q)) return {q, status: 403};
+        stored[qkey(q)] = remove ? null : innerXml(prop);
         return {q, status: 200};
     });
 
     if (results.some((r) => r.status !== 200)) {
         for (const r of results) if (r.status === 200) r.status = 424;
-    } else if (results.length && target.kind === 'calendar') {
+    } else if (results.length) {
         try {
-            await ctx.provider.updateCalendar!(ctx.principal, target.calendar, changes);
+            // Live properties first: they are the ones a provider is likely to reject.
+            if (Object.keys(changes).length && target.kind === 'calendar') {
+                await ctx.provider.updateCalendar!(ctx.principal, target.calendar, changes);
+            }
+            if ('displayName' in principalChanges) await ctx.provider.updatePrincipal!(ctx.principal, {displayName: principalChanges.displayName ?? null});
+            if (store && Object.keys(stored).length) await store.set(ctx.principal, ctx.href(target), stored);
         } catch (e) {
             if (!(e instanceof CalDavError)) throw e;
             for (const r of results) r.status = e.status;
         }
     }
     return multistatus([d('response', d('href', ctx.href(target)), ...propstats(results))]);
+}
+
+/** May the user store properties on this resource? */
+function mayStore(ctx: Context, r: Resource): boolean {
+    if (!ctx.writable) return false;
+    if (r.kind === 'calendar') return !r.calendar.readOnly;
+    if (r.kind === 'object') return ctx.canWrite(r.calendar);
+    return true;
 }
 
 /**

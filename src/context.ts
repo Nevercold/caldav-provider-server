@@ -1,5 +1,6 @@
 import type {CalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
+import type {WebDavPush} from './push.ts';
 import type {Calendar, CalDavProvider, CalendarObject, Delegation, Invitation, Principal, PrincipalSearchResult} from './types.ts';
 
 export type Resource =
@@ -84,6 +85,9 @@ export class Context<P extends Principal = Principal> {
         if (!this.storedProps.has(path)) this.storedProps.set(path, store.get(this.principal, path));
         return this.storedProps.get(path)!;
     }
+
+    /** WebDAV-Push, see `CalDavOptions.push`. */
+    push?: WebDavPush;
 
     /** Default size limit of calendar objects, see `CalDavOptions.maxObjectSize`. */
     maxObjectSize?: number;

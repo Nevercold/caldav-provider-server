@@ -13,6 +13,7 @@ import {mkdirSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import Fastify from 'fastify';
 import {caldav} from '../src/fastify.ts';
+import {generateVapidKeys, MemoryPushStore, WebDavPush} from '../src/index.ts';
 import {MemoryProvider} from './memory-provider.ts';
 
 const port = Number(process.env.PORT ?? 5232);
@@ -88,10 +89,14 @@ if (record) {
     });
 }
 
+// WebDAV-Push for DAVx⁵. The VAPID keys are new on every start here; keep them in a real setup.
+const push = new WebDavPush({store: new MemoryPushStore(), vapid: generateVapidKeys(), subject: 'mailto:admin@example.com'});
+
 await app.register(caldav, {
     provider,
     basePath: '/dav',
     realm: 'caldav-provider-server example',
+    push,
     onError: (error) => app.log.error(error),
 });
 

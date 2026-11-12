@@ -485,6 +485,33 @@ const attachments: AttachmentProvider<User> = {
 - Request bodies may be bytes (`Uint8Array`/`Buffer`); the Fastify plugin passes them through. Attachment downloads
   answer with bytes as `body`.
 
+### WebDAV-Push
+
+DAVx⁵ can be notified of changes right away instead of polling, with
+[WebDAV-Push](https://github.com/bitfireAT/webdav-push) over Web Push (VAPID, RFC 8292, and aes128gcm encryption,
+RFC 8291; implemented with `node:crypto`, no extra dependency). Pass a `WebDavPush` as option:
+
+```ts
+import {generateVapidKeys, WebDavPush} from 'caldav-provider-server';
+
+// once: const vapid = generateVapidKeys(); store {publicKey, privateKey}
+const push = new WebDavPush({store: pushStore, vapid, subject: 'mailto:admin@example.com'});
+await app.register(caldav, {provider, push, origin: 'https://cal.example.com'});
+```
+
+- Calendars and the calendar home report `transports` (with the VAPID public key), `topic` and `supported-triggers`
+  (content updates with depth 1, property updates of calendars with depth 0); the `DAV` header has `webdav-push`.
+- Clients register with `POST push-register` (201 or 204 with `Location` and `Expires`, at most `maxExpiration`,
+  default 7 days) and unregister with `DELETE` of the registration URL `<basePath>/push/<id>`.
+- Changes through CalDAV (`PUT`, `DELETE`, `MOVE`, `COPY`, attachments, `PROPPATCH` of a calendar, new or removed
+  calendars) send a push message in the background, with the new `sync-token`. `Push-Dont-Notify` is respected.
+- Changes in your backend: call `push.notifyCalendar(principalId, calendar)` (content; pass
+  `{properties: true}` for name/color changes) or `push.notifyHome(principalId)` when calendars appear or vanish.
+- Registrations live in a `PushStore` (`save`, `remove`, `get`, `list(topic)`, `find`) shared by all instances;
+  `MemoryPushStore` is enough for one. Registrations the push service answers with 404/410 are removed.
+- Topics are opaque hashes. With `Calendar.globalId` a shared calendar has one topic for everybody, so one
+  `notifyCalendar` reaches all members; without it, call it per member.
+
 ### Locking
 
 None of the common CalDAV clients locks, but generic WebDAV tools do. With a `locks` provider the server supports

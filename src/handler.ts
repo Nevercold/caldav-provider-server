@@ -1,6 +1,8 @@
 import {getAttachment, handleAttachmentPost, managedIdsOf} from './attachments.ts';
 import {deleteCalendar, mkcalendar, proppatchCollection, transferCalendar} from './collections.ts';
 import {canonicalPath, checkLocks, handleLock, handleUnlock} from './locks.ts';
+import {PUSH_NS, type WebDavPush} from './push.ts';
+import {handlePushRegister, handlePushUnregister, notifyAfterChange} from './pushhandler.ts';
 import {Context, notificationName, quoteEtag, type Resource, unquoteEtag} from './context.ts';
 import {
     handleInviteReply,
@@ -38,6 +40,8 @@ export interface CalDavOptions<P extends Principal = Principal> {
      * `Calendar.maxResourceSize` overrides it per calendar. Default: no limit.
      */
     maxObjectSize?: number;
+    /** WebDAV-Push (DAVx⁵): a `WebDavPush` with VAPID keys and a registration store. */
+    push?: WebDavPush;
     /** Called for unexpected errors (answered with 500). */
     onError?: (error: unknown, request: CalDavRequest) => void;
 }
@@ -114,6 +118,10 @@ async function post(ctx: Context, req: ParsedRequest, path: string): Promise<Cal
     const r = await ctx.resolve(path);
     const query = new URL(req.url, 'http://x').searchParams;
     if (query.get('action')?.startsWith('attachment-')) return handleAttachmentPost(ctx, req, r, query);
+    if (/<([\w-]+:)?push-register\b/.test(req.body ?? '')) {
+        const root = parseBody(req);
+        if (is(root, PUSH_NS, 'push-register')) return handlePushRegister(ctx, r, root!);
+    }
     if (r.kind === 'calendar' || r.kind === 'home') {
         const root = parseBody(req);
         if (r.kind === 'calendar' && is(root, NS.CS, 'share')) return handleShare(ctx, r, root!);
@@ -414,11 +422,11 @@ async function copy(ctx: Context, req: ParsedRequest, path: string): Promise<Cal
     return {status: target.object ? 204 : 201, headers: {}};
 }
 
-function optionsResponse(provider: CalDavProvider<never>): CalDavResponse {
+function optionsResponse(provider: CalDavProvider<never>, push: boolean): CalDavResponse {
     return {
         status: 200,
         headers: {
-            DAV: davHeader(provider),
+            DAV: davHeader(provider, push),
             Allow: METHODS.join(', '),
             'Content-Length': '0',
         },
@@ -456,7 +464,7 @@ async function enforceLocks(ctx: Context, req: ParsedRequest, method: string, pa
     }
 }
 
-function davHeader(provider: CalDavProvider<never>): string {
+function davHeader(provider: CalDavProvider<never>, push: boolean): string {
     return [
         '1',
         ...(provider.locks ? ['2'] : []),
@@ -467,6 +475,7 @@ function davHeader(provider: CalDavProvider<never>): string {
         ...(provider.createCalendar ? ['extended-mkcol'] : []),
         ...(provider.sharing ? ['calendarserver-sharing', 'resource-sharing'] : []),
         ...(provider.attachments ? ['calendar-managed-attachments'] : []),
+        ...(push ? ['webdav-push'] : []),
     ].join(', ');
 }
 
@@ -506,7 +515,7 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                 return {status: 301, headers: {Location: `${base}/`}};
             }
             if (path !== base && !path.startsWith(`${base}/`)) throw CalDavError.notFound();
-            if (method === 'OPTIONS') return optionsResponse(provider as CalDavProvider<never>);
+            if (method === 'OPTIONS') return optionsResponse(provider as CalDavProvider<never>, !!options.push);
             // Published feeds are public: no login.
             const publicMatch = /^\/public\/([^/]+)$/.exec(path.slice(base.length));
             if (publicMatch && provider.publishing?.resolveFeed && (method === 'GET' || method === 'HEAD')) {
@@ -532,6 +541,18 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
             const proto = header(req, 'x-forwarded-proto')?.split(',')[0]?.trim() || 'http';
             ctx.origin = (options.origin ?? `${proto}://${header(req, 'host') ?? 'localhost'}`).replace(/\/+$/, '');
             ctx.maxObjectSize = options.maxObjectSize;
+            ctx.push = options.push;
+            const registration = /^\/push\/([^/]+)$/.exec(path.slice(base.length));
+            if (registration && options.push) {
+                if (method !== 'DELETE') return {status: 405, headers: {Allow: 'DELETE'}};
+                let id: string;
+                try {
+                    id = decodeURIComponent(registration[1]!);
+                } catch {
+                    throw CalDavError.notFound();
+                }
+                return await handlePushUnregister(ctx, id);
+            }
             if (provider.locks) await enforceLocks(ctx, req, method, path);
             let res: CalDavResponse;
             switch (method) {
@@ -586,7 +607,10 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                 default:
                     return {status: 405, headers: {Allow: METHODS.join(', ')}};
             }
-            res.headers.DAV ??= davHeader(provider as CalDavProvider<never>);
+            res.headers.DAV ??= davHeader(provider as CalDavProvider<never>, !!options.push);
+            if (options.push && res.status < 300) {
+                notifyAfterChange(ctx, req, method, path, (e) => options.onError?.(e, original));
+            }
             return res;
         } catch (e) {
             if (e instanceof CalDavError) return errorResponse(e);

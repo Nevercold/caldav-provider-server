@@ -2,6 +2,8 @@ import {applyCalendarData} from './calendardata.ts';
 import {floatingZoneOf} from './freebusy.ts';
 import {draftInviteProperty, inviteProperty, notificationEtag, notificationsSyncToken, shareAccessProperty} from './sharing.ts';
 import {lockDiscovery, supportedLock} from './locks.ts';
+import {PUSH_NS} from './push.ts';
+import {supportedTriggersProperty, topicOf, transportsProperty} from './pushhandler.ts';
 import {type Context, homeSyncToken, normalizeAddresses, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
 import type {Calendar, PrincipalSearchResult} from './types.ts';
@@ -317,6 +319,15 @@ def(NS.CALDAV, 'max-resource-size', (ctx, r) => {
     const max = r.kind === 'calendar' ? ctx.maxSizeOf(r.calendar) : undefined;
     return max !== undefined ? ok(String(max)) : undefined;
 });
+
+// --- WebDAV-Push (draft-bitfire-webdav-push), only with the push option ---
+
+def(PUSH_NS, 'transports', (ctx, r) => transportsProperty(ctx, r));
+def(PUSH_NS, 'topic', (ctx, r) => {
+    const topic = topicOf(ctx, r);
+    return topic ? ok(topic) : undefined;
+});
+def(PUSH_NS, 'supported-triggers', (ctx, r) => supportedTriggersProperty(ctx, r));
 
 // --- Locking (RFC 4918 15.8, 15.10), only with a lock provider ---
 

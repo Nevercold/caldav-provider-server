@@ -106,6 +106,17 @@ export interface DeleteObjectInput {
     ifMatch?: string;
 }
 
+export interface MoveObjectInput {
+    /** The object's name in the source calendar. */
+    name: string;
+    /** Its name in the target calendar (usually the same). */
+    destinationName: string;
+    /** An object with that name in the target may be replaced (`Overwrite: T`, the default). */
+    overwrite: boolean;
+    /** The ETag the client expects of the source (If-Match), without quotes. */
+    ifMatch?: string;
+}
+
 /** An iTIP message (RFC 5546) the server wants delivered. */
 export interface SchedulingMessage<P extends Principal = Principal> {
     method: 'REQUEST' | 'REPLY' | 'CANCEL' | 'ADD' | 'REFRESH' | 'COUNTER' | 'DECLINECOUNTER' | 'PUBLISH';
@@ -203,6 +214,12 @@ export interface CalDavProvider<P extends Principal = Principal> {
     /** Create or replace an object. Without it, every calendar is read-only. */
     putObject?(principal: P, calendar: Calendar, input: PutObjectInput): Promise<PutObjectResult>;
     deleteObject?(principal: P, calendar: Calendar, input: DeleteObjectInput): Promise<void>;
+    /**
+     * Move an object to another calendar of the principal (WebDAV MOVE, how Apple Calendar moves
+     * an event). Keep it the same object: a delete plus create would cancel and re-invite its
+     * attendees. Without it, MOVE answers 403 and clients fall back to PUT + DELETE.
+     */
+    moveObject?(principal: P, from: Calendar, to: Calendar, input: MoveObjectInput): Promise<void>;
     /** Enables scheduling (RFC 6638). */
     scheduling?: SchedulingProvider<P>;
     /**

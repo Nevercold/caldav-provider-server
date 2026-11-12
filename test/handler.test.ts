@@ -142,6 +142,52 @@ describe('discovery', () => {
     });
 });
 
+describe('MOVE', () => {
+    const EVENT = ics('VEVENT', 'm1', 'DTSTART:20260601T100000Z', 'SUMMARY:Move me');
+    const from = '/dav/calendars/alice/personal/m1.ics';
+    const to = 'https://cal.example.com/dav/calendars/alice/team/m1.ics';
+
+    it('moves an object to another calendar of the user', async () => {
+        const {request} = setup();
+        await request('PUT', from, {body: EVENT, headers: {'content-type': 'text/calendar'}});
+        const res = await request('MOVE', from, {headers: {destination: to}});
+        expect(res.status).toBe(201);
+        expect((await request('GET', from)).status).toBe(404);
+        const moved = await request('GET', '/dav/calendars/alice/team/m1.ics');
+        expect(moved.status).toBe(200);
+        expect(moved.body).toContain('SUMMARY:Move me');
+    });
+
+    it('keeps the rules: existing target, If-Match, read-only, missing calendar, other server', async () => {
+        const {request} = setup();
+        await request('PUT', from, {body: EVENT, headers: {'content-type': 'text/calendar'}});
+        await request('PUT', '/dav/calendars/alice/team/m1.ics', {body: EVENT, headers: {'content-type': 'text/calendar'}});
+        expect((await request('MOVE', from, {headers: {destination: to, overwrite: 'F'}})).status).toBe(412);
+        expect((await request('MOVE', from, {headers: {destination: to, 'if-match': '"nope"'}})).status).toBe(412);
+        expect((await request('MOVE', from, {headers: {destination: '/dav/calendars/alice/nope/m1.ics'}})).status).toBe(409);
+        expect((await request('MOVE', from, {headers: {destination: 'https://other.example.com/elsewhere/m1.ics'}})).status).toBe(502);
+        expect((await request('MOVE', from, {headers: {destination: '/dav/calendars/alice/todos/m1.ics'}})).status).toBe(403);
+        expect((await request('MOVE', from))).toMatchObject({status: 400});
+        expect((await request('MOVE', '/dav/calendars/alice/personal/', {headers: {destination: to}})).status).toBe(403);
+        // Overwrite (default T) replaces the target.
+        expect((await request('MOVE', from, {headers: {destination: to}})).status).toBe(204);
+    });
+
+    it('can\'t move out of a read-only calendar', async () => {
+        const {request} = setup();
+        await request('PUT', '/dav/calendars/alice/team/m1.ics', {body: EVENT, headers: {'content-type': 'text/calendar'}});
+        const res = await request('MOVE', '/dav/calendars/bob/team/m1.ics', {user: 'bob', headers: {destination: '/dav/calendars/bob/bobcal/m1.ics'}});
+        expect(res.status).toBe(403);
+    });
+
+    it('answers 403 without moveObject', async () => {
+        const {provider, request} = setup();
+        (provider as {moveObject?: unknown}).moveObject = undefined;
+        await request('PUT', from, {body: EVENT, headers: {'content-type': 'text/calendar'}});
+        expect((await request('MOVE', from, {headers: {destination: to}})).status).toBe(403);
+    });
+});
+
 describe('principal search', () => {
     const CS = 'xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/"';
     const PROPS = '<d:prop><d:displayname/><c:calendar-user-address-set/><cs:email-address-set/><cs:first-name/></d:prop>';

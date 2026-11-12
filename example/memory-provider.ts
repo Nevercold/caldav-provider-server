@@ -5,6 +5,7 @@ import {
     type CalendarObject,
     type Changes,
     type ComponentType,
+    type MoveObjectInput,
     type Principal,
     type PrincipalSearchQuery,
     type PrincipalSearchResult,
@@ -135,6 +136,19 @@ export class MemoryProvider implements CalDavProvider<User> {
         if (input.ifMatch && current.etag !== input.ifMatch) throw CalDavError.preconditionFailed();
         cal.objects.delete(input.name);
         cal.log.push({version: ++this.version, name: input.name, deleted: true});
+    }
+
+    async moveObject(principal: User, from: Calendar, to: Calendar, input: MoveObjectInput): Promise<void> {
+        const source = this.stored(principal, from);
+        const target = this.stored(principal, to);
+        if (source.members.get(principal.id)!.readOnly || target.members.get(principal.id)!.readOnly) throw CalDavError.forbidden();
+        const object = source.objects.get(input.name);
+        if (!object) throw CalDavError.notFound();
+        if (input.ifMatch && object.etag !== input.ifMatch) throw CalDavError.preconditionFailed();
+        if (target.objects.has(input.destinationName) && !input.overwrite) throw CalDavError.preconditionFailed();
+        source.objects.delete(input.name);
+        source.log.push({version: ++this.version, name: input.name, deleted: true});
+        this.write(target, input.destinationName, object.ics);
     }
 
     /** Every other user whose name or address contains the terms (to invite them). */

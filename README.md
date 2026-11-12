@@ -111,6 +111,7 @@ becomes a 500 and is passed to `onError`.
 | `changesSince(principal, calendar, token)`  | no       | changes for `sync-collection`, `null` for unknown tokens        |
 | `putObject(principal, calendar, input)`     | no       | create or replace; without it everything is read-only           |
 | `deleteObject(principal, calendar, input)`  | no       | delete                                                          |
+| `moveObject(principal, from, to, input)`    | no       | `MOVE` to another calendar (Apple Calendar moves events so)     |
 | `scheduling`                                | no       | enables RFC 6638, see below                                     |
 | `searchPrincipals(principal, query)`        | no       | other users to find, e.g. to invite them, see below             |
 
@@ -301,6 +302,8 @@ Notes per client:
   the client) is answered with 403; color and name come from the provider.
 - **Apple** polls the calendar home with `sync-collection`; the home sync token is computed from the calendars' tokens,
   so it needs no storage.
+- **Apple Calendar** moves an event to another calendar with `MOVE` (`Destination`, `Overwrite: F`); implement
+  `moveObject` to keep it the same event. Without it, `MOVE` answers 403 and the app tries `PUT` + `DELETE` instead.
 - **Thunderbird** finds the scheduling inbox and outbox through `principal-collection-set` and the principal.
 - **DAVx⁵** uses `If-Schedule-Tag-Match` when scheduling is enabled; without `scheduleTag` in your objects the ETag is
   used.
@@ -314,7 +317,7 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 
 - Creating, renaming or recoloring calendars from a client (`MKCALENDAR`, `PROPPATCH` answer 403)
 - Partial `calendar-data` (`<C:comp>`, `<C:expand>`, `<C:limit-recurrence-set>`): the full object is always returned
-- `free-busy-query` REPORT, ACLs (`DAV:acl`), locking, `COPY`/`MOVE`
+- `free-busy-query` REPORT, ACLs (`DAV:acl`), locking, `COPY`; `MOVE` only of objects between calendars (`moveObject`)
 - Reading other principals' resources: a found principal's URL answers 403; clients only need its search result
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)
 - Attachments (managed attachments, RFC 8607)

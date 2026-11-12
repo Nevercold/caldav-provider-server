@@ -240,6 +240,58 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
     return {status: 204, headers: {}};
 }
 
+/**
+ * MOVE of an object to another calendar (RFC 4918 9.9), through the provider's `moveObject`.
+ * Collections can't be moved; the target calendar must accept the component.
+ */
+async function move(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+    if (!ctx.provider.moveObject) throw CalDavError.forbidden('MOVE is not supported');
+    const r = await ctx.resolve(path);
+    if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be moved');
+    if (!r.object) throw CalDavError.notFound();
+
+    const destination = header(req, 'destination');
+    if (!destination) throw new CalDavError(400, 'MOVE needs a Destination header');
+    let destinationPath: string;
+    try {
+        destinationPath = new URL(destination, 'http://x').pathname;
+    } catch {
+        throw new CalDavError(400, 'invalid Destination header');
+    }
+    if (destinationPath !== ctx.base && !destinationPath.startsWith(`${ctx.base}/`)) {
+        throw new CalDavError(502, 'Destination is on another server');
+    }
+    let target: Resource;
+    try {
+        target = await ctx.resolve(destinationPath);
+    } catch (e) {
+        // RFC 4918 9.9.4: the destination's collection doesn't exist.
+        if (e instanceof CalDavError && e.status === 404) throw new CalDavError(409, 'destination calendar does not exist');
+        throw e;
+    }
+    if (target.kind !== 'object') throw CalDavError.forbidden('the destination must be a calendar object');
+    if (target.calendar.id === r.calendar.id && target.name === r.name) throw CalDavError.forbidden('source and destination are the same');
+    if (!ctx.canDelete(r.calendar) || !ctx.canWrite(target.calendar)) throw CalDavError.forbidden('calendar is read-only');
+
+    const vcal = safeParse(r.object.ics);
+    const componentType = vcal ? (() => {
+        try {
+            return inspectObject(vcal).componentType;
+        } catch {
+            return undefined;
+        }
+    })() : undefined;
+    if (componentType && !target.calendar.components.includes(componentType)) {
+        throw CalDavError.caldav(403, 'supported-calendar-component', `calendar does not accept ${componentType}`);
+    }
+    const overwrite = header(req, 'overwrite')?.trim().toUpperCase() !== 'F';
+    if (target.object && !overwrite) throw CalDavError.preconditionFailed('destination exists');
+    const ifMatch = checkPreconditions(ctx, req, r.object);
+
+    await ctx.provider.moveObject(ctx.principal, r.calendar, target.calendar, {name: r.name, destinationName: target.name, overwrite, ifMatch});
+    return {status: target.object ? 204 : 201, headers: {}};
+}
+
 function optionsResponse(provider: CalDavProvider<never>): CalDavResponse {
     return {
         status: 200,
@@ -312,9 +364,11 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                 case 'POST':
                     res = await handleOutboxPost(ctx, req, path);
                     break;
+                case 'MOVE':
+                    res = await move(ctx, req, path);
+                    break;
                 case 'MKCOL':
                 case 'MKCALENDAR':
-                case 'MOVE':
                 case 'COPY':
                     throw CalDavError.forbidden(`${method} is not supported`);
                 default:

@@ -10,6 +10,7 @@ export type {
     Changes,
     ComponentType,
     DeleteObjectInput,
+    MoveObjectInput,
     ObjectQuery,
     Principal,
     PrincipalSearchQuery,

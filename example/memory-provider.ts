@@ -16,6 +16,7 @@ import {
     type PrincipalSearchQuery,
     type PrincipalSearchResult,
     processSchedulingMessage,
+    type PublishingProvider,
     type PutObjectResult,
     type ScheduleStatus,
     type SchedulingProvider,
@@ -134,6 +135,35 @@ export class MemoryProvider implements CalDavProvider<User> {
         for (const [address, entry] of cal.shares) if (mine.has(address)) return entry;
         return undefined;
     }
+
+    /** Where published feeds are served, see `publishing.resolveFeed`. */
+    publicBase = 'http://localhost:5232/dav/public/';
+    /** calendar id → feed token */
+    private readonly published = new Map<string, string>();
+
+    readonly publishing: PublishingProvider<User> = {
+        publishedUrl: async (principal, calendar) => {
+            this.stored(principal, calendar);
+            const token = this.published.get(calendar.id);
+            return token ? `${this.publicBase}${token}.ics` : null;
+        },
+        publish: async (principal, calendar) => {
+            this.stored(principal, calendar);
+            const token = this.published.get(calendar.id) ?? crypto.randomUUID();
+            this.published.set(calendar.id, token);
+            return `${this.publicBase}${token}.ics`;
+        },
+        unpublish: async (principal, calendar) => {
+            this.stored(principal, calendar);
+            this.published.delete(calendar.id);
+        },
+        resolveFeed: async (token) => {
+            const id = [...this.published].find(([, t]) => t === token)?.[0];
+            const cal = id ? this.calendars.get(id) : undefined;
+            const owner = cal?.owner ? this.users.get(cal.owner) : undefined;
+            return cal && owner ? {principal: owner, calendar: this.toCalendar(cal, owner.id)} : null;
+        },
+    };
 
     /** Attachment files by managed id. */
     readonly files: Map<string, {calendarId: string; input: AttachmentInput}> = new Map();

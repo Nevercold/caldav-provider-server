@@ -2,7 +2,15 @@ import {getAttachment, handleAttachmentPost, managedIdsOf} from './attachments.t
 import {deleteCalendar, mkcalendar, proppatchCollection} from './collections.ts';
 import {canonicalPath, checkLocks, handleLock, handleUnlock} from './locks.ts';
 import {Context, notificationName, quoteEtag, type Resource, unquoteEtag} from './context.ts';
-import {handleInviteReply, handleShare, notificationBody, notificationEtag} from './sharing.ts';
+import {
+    handleInviteReply,
+    handlePublish,
+    handleShare,
+    handleShareResource,
+    notificationBody,
+    notificationEtag,
+    publicFeed,
+} from './sharing.ts';
 import {CalDavError} from './errors.ts';
 import {type Component, IcsError, inspectObject, parseIcs} from './ical.ts';
 import {allPropNames, propResponse} from './props.ts';
@@ -109,6 +117,10 @@ async function post(ctx: Context, req: ParsedRequest, path: string): Promise<Cal
     if (r.kind === 'calendar' || r.kind === 'home') {
         const root = parseBody(req);
         if (r.kind === 'calendar' && is(root, NS.CS, 'share')) return handleShare(ctx, r, root!);
+        if (r.kind === 'calendar' && is(root, NS.DAV, 'share-resource')) return handleShareResource(ctx, r, root!);
+        if (r.kind === 'calendar' && (is(root, NS.CS, 'publish-calendar') || is(root, NS.CS, 'unpublish-calendar'))) {
+            return handlePublish(ctx, r, is(root, NS.CS, 'publish-calendar'));
+        }
         if (r.kind === 'home' && is(root, NS.CS, 'invite-reply')) return handleInviteReply(ctx, root!);
         throw new CalDavError(400, 'unsupported POST body');
     }
@@ -451,7 +463,7 @@ function davHeader(provider: CalDavProvider<never>): string {
         'calendar-access',
         ...(provider.scheduling ? ['calendar-auto-schedule'] : []),
         ...(provider.createCalendar ? ['extended-mkcol'] : []),
-        ...(provider.sharing ? ['calendarserver-sharing'] : []),
+        ...(provider.sharing ? ['calendarserver-sharing', 'resource-sharing'] : []),
         ...(provider.attachments ? ['calendar-managed-attachments'] : []),
     ].join(', ');
 }
@@ -493,6 +505,17 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
             }
             if (path !== base && !path.startsWith(`${base}/`)) throw CalDavError.notFound();
             if (method === 'OPTIONS') return optionsResponse(provider as CalDavProvider<never>);
+            // Published feeds are public: no login.
+            const publicMatch = /^\/public\/([^/]+)$/.exec(path.slice(base.length));
+            if (publicMatch && provider.publishing?.resolveFeed && (method === 'GET' || method === 'HEAD')) {
+                let token: string;
+                try {
+                    token = decodeURIComponent(publicMatch[1]!);
+                } catch {
+                    throw CalDavError.notFound();
+                }
+                return await publicFeed(provider, token, method === 'HEAD');
+            }
 
             const credentials = parseBasicAuth(header(req, 'authorization'));
             const principal = credentials ? await provider.authenticate(credentials.username, credentials.password) : null;

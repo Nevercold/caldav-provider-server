@@ -22,7 +22,7 @@ async function invitationId(request: ReturnType<typeof setup>['request']): Promi
     return decodeURIComponent(href.split('/').at(-1)!.replace(/\.xml$/, ''));
 }
 
-describe('sharing', () => {
+describe('sharing and publishing', () => {
     it('the owner shares a calendar and sees the sharees', async () => {
         const {request} = setup();
         const res = await request('POST', CAL, {body: invite, headers: {'content-type': 'application/xml'}});
@@ -34,7 +34,67 @@ describe('sharing', () => {
         expect(p.invite).toBe(
             'organizer(href(/dav/principals/alice/) common-name(Alice)) user(href(mailto:bob@example.com) common-name(Bob) invite-noresponse access(read-write))',
         );
-        expect(p['allowed-sharing-modes']).toBe('can-be-shared');
+        expect(p['allowed-sharing-modes']).toBe('can-be-shared can-be-published');
+    });
+
+    it('owner side of the share-resource draft', async () => {
+        const {request} = setup();
+        const body = `<d:share-resource xmlns:d="DAV:"><d:sharee><d:href>mailto:bob@example.com</d:href><d:prop><d:displayname>Bob</d:displayname></d:prop><d:comment>Plans</d:comment><d:share-access><d:read/></d:share-access></d:sharee></d:share-resource>`;
+        expect((await request('POST', CAL, {body, headers: {'content-type': 'application/davsharing+xml'}})).status).toBe(200);
+        const p = props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<d:share-access/><d:invite/>')}))[CAL]!;
+        expect(p['share-access']).toBe('shared-owner');
+        expect(p.invite).toBe('sharee(href(mailto:bob@example.com) prop(displayname(Bob)) invite-noresponse share-access(read))');
+        const remove = body.replace('<d:read/>', '<d:no-access/>');
+        await request('POST', CAL, {body: remove});
+        expect(props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<d:share-access/>')}))[CAL]!['share-access']).toBe('not-shared');
+    });
+
+    const publish = '<?xml version="1.0" encoding="UTF-8"?><cs:publish-calendar xmlns:cs="http://calendarserver.org/ns/"/>';
+    const unpublish = '<?xml version="1.0" encoding="UTF-8"?><cs:unpublish-calendar xmlns:cs="http://calendarserver.org/ns/"/>';
+
+    it('publishes, reports the URL, serves the feed without login and unpublishes', async () => {
+        const {request} = setup();
+        await request('PUT', `${CAL}a.ics`, {body: ics('VEVENT', 'a', 'DTSTART:20260601T100000Z', 'SUMMARY:Public')});
+        await request('PUT', `${CAL}b.ics`, {body: ics('VEVENT', 'b', 'DTSTART:20260602T100000Z')});
+        expect((await request('POST', CAL, {body: publish})).status).toBe(200);
+        const url = props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:publish-url/>')}))[CAL]!['publish-url']!;
+        expect(url).toMatch(/^href\(http:\/\/localhost:5232\/dav\/public\/[0-9a-f-]+\.ics\)$/);
+
+        const path = /\/dav\/public\/[^)]+/.exec(url)![0];
+        const feed = await request('GET', path, {user: null});
+        expect(feed.status).toBe(200);
+        expect(feed.headers['Content-Type']).toBe('text/calendar; charset=utf-8');
+        expect(feed.body).toMatch(/^BEGIN:VCALENDAR\r\n[\s\S]*X-WR-CALNAME:Personal\r\n[\s\S]*UID:a[\s\S]*UID:b[\s\S]*END:VCALENDAR\r\n$/);
+
+        expect((await request('POST', CAL, {body: unpublish})).status).toBe(200);
+        expect((await request('GET', path, {user: null})).status).toBe(404);
+        expect(props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:publish-url/>')}))[CAL]!['publish-url']).toBeUndefined();
+    });
+
+    it('works with an external URL and without unpublish or resolveFeed', async () => {
+        const {request, provider} = setup();
+        const calls: string[] = [];
+        Object.assign(provider, {
+            publishing: {
+                publishedUrl: async () => 'webcal://feeds.example.com/abc.ics',
+                publish: async () => {
+                    calls.push('publish');
+                    return 'webcal://feeds.example.com/abc.ics';
+                },
+            },
+        });
+        expect((await request('POST', CAL, {body: publish})).status).toBe(200);
+        expect((await request('POST', CAL, {body: unpublish})).status).toBe(200);
+        expect(calls).toEqual(['publish']);
+        expect(props(await request('PROPFIND', CAL, {headers: {depth: '0'}, body: PROPFIND('<cs:publish-url/>')}))[CAL]!['publish-url']).toBe(
+            'href(webcal://feeds.example.com/abc.ics)',
+        );
+        expect((await request('GET', '/dav/public/abc', {user: null})).status).toBe(401);
+    });
+
+    it('read-only members and sharees cannot publish', async () => {
+        const {request} = setup();
+        expect((await request('POST', '/dav/calendars/bob/team/', {user: 'bob', body: publish})).status).toBe(403);
     });
 
     it('the sharee gets a notification, accepts it as Apple does and uses the calendar', async () => {

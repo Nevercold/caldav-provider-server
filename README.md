@@ -124,6 +124,7 @@ becomes a 500 and is passed to `onError`.
 | `delegations(user)`                         | no       | whose calendars the user may use "on behalf of", see below      |
 | `delegates(principal)`, `setDelegates(…)`   | no       | the principal's delegates, shown and changed by clients         |
 | `sharing`                                   | no       | sharing calendars from the client (Apple Calendar), see below   |
+| `publishing`                                | no       | public read-only feeds ("Public Calendar"), see below           |
 | `attachments`                               | no       | managed attachments (RFC 8607), see below                       |
 | `locks`                                     | no       | `LOCK` / `UNLOCK` storage, see below                            |
 
@@ -389,6 +390,34 @@ const sharing: SharingProvider<User> = {
   `CS:notification-URL`) with `sync-collection` support. The invitee POSTs `CS:invite-reply` to the calendar home,
   which calls `replyToInvitation`; `DELETE` of a notification calls `dismissInvitation`.
 
+Clients that follow the WebDAV resource sharing draft (draft-pot-webdav-resource-sharing) can share through the same
+provider: `POST` of `DAV:share-resource` maps onto `share` (`no-access` removes a sharee), and calendars report
+`DAV:share-access` and `DAV:invite`. Invitations of that draft's notification format are not sent; invitees answer
+through the CalendarServer notifications above or your own UI.
+
+### Publishing
+
+Apple Calendar's "Public Calendar" switch publishes a read-only feed (CalendarServer `CS:publish-calendar`). The
+URL is yours: return any absolute URL, e.g. a feed you already serve elsewhere.
+
+```ts
+const publishing: PublishingProvider<User> = {
+    async publishedUrl(user, calendar) {
+        return feeds.urlOf(calendar.id); // or null when not published
+    },
+    async publish(user, calendar) {
+        return feeds.create(calendar.id); // e.g. 'webcal://feeds.example.com/<signed token>.ics'
+    },
+    async unpublish(user, calendar) {}, // optional; without it, switching off is accepted and nothing happens
+};
+```
+
+Calendars then offer `can-be-published` and report `CS:publish-url`. Read-only calendars and calendars shared with
+the user can't be published. Optionally the server serves the feed itself, without login, at
+`<basePath>/public/<token>` (`.ics` may be appended): implement `resolveFeed(token)` returning the owner and the
+calendar, and return such URLs from `publish`. The feed is one VCALENDAR with all objects, their time zones and
+`X-WR-CALNAME`.
+
 ### Attachments
 
 With an `attachments` provider, clients upload files to events and to-dos ([RFC 8607](https://www.rfc-editor.org/rfc/rfc8607)
@@ -483,8 +512,8 @@ more properties; check a setup with the example server below, and `RECORD=…` t
   home 403
 - Locks of unmapped URLs (they would create empty resources). Locks belong to a URL: a shared calendar reached through
   another user's URL is not covered by them
-- Publishing calendars (`CS:can-be-published`, webcal) and the WebDAV resource sharing draft (`share-resource`,
-  draft-pot-webdav-resource-sharing); sharing follows CalendarServer's model that Apple Calendar uses
+- The invitee side of the WebDAV resource sharing draft (its notifications and replies); invitees use
+  CalendarServer's notifications
 
 ## Example server
 

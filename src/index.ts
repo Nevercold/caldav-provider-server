@@ -22,6 +22,7 @@ export type {
     Principal,
     PrincipalSearchQuery,
     PrincipalSearchResult,
+    PublishingProvider,
     PutObjectInput,
     PutObjectResult,
     ScheduleStatus,

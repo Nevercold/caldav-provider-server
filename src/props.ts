@@ -1,6 +1,6 @@
 import {applyCalendarData} from './calendardata.ts';
 import {floatingZoneOf} from './freebusy.ts';
-import {inviteProperty, notificationEtag, notificationsSyncToken} from './sharing.ts';
+import {draftInviteProperty, inviteProperty, notificationEtag, notificationsSyncToken, shareAccessProperty} from './sharing.ts';
 import {lockDiscovery, supportedLock} from './locks.ts';
 import {type Context, homeSyncToken, normalizeAddresses, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
@@ -376,9 +376,22 @@ def(NS.CS, 'invite', (ctx, r) => inviteProperty(ctx, r));
 
 def(NS.CS, 'allowed-sharing-modes', (ctx, r) => {
     if (r.kind !== 'calendar') return undefined;
-    const canShare = !!ctx.provider.sharing && ctx.writable && !r.calendar.sharedBy;
-    return ok(canShare ? el(NS.CS, 'can-be-shared') : null);
+    const own = ctx.writable && !r.calendar.sharedBy;
+    return ok(
+        ctx.provider.sharing && own ? el(NS.CS, 'can-be-shared') : null,
+        ctx.provider.publishing && own && !r.calendar.readOnly ? el(NS.CS, 'can-be-published') : null,
+    );
 });
+
+def(NS.CS, 'publish-url', async (ctx, r) => {
+    if (r.kind !== 'calendar' || !ctx.provider.publishing) return undefined;
+    const url = await ctx.provider.publishing.publishedUrl(ctx.principal, r.calendar);
+    return url ? ok(href(url)) : undefined;
+});
+
+// Draft sharing (draft-pot-webdav-resource-sharing), owner side.
+def(NS.DAV, 'share-access', (ctx, r) => shareAccessProperty(ctx, r), false);
+def(NS.DAV, 'invite', (ctx, r) => draftInviteProperty(ctx, r), false);
 
 def(NS.CS, 'notification-URL', (ctx, r) =>
     r.kind === 'principal' && ctx.provider.sharing?.invitations ? ok(href(ctx.notificationsHref())) : undefined,

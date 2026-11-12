@@ -285,6 +285,25 @@ export interface PrincipalSearchQuery {
     limit?: number;
 }
 
+/**
+ * Publishing a calendar as a read-only feed (Apple's "Public Calendar", CalendarServer
+ * CS:publish-calendar). The URL can be anything, e.g. a feed you already serve elsewhere.
+ */
+export interface PublishingProvider<P extends Principal = Principal> {
+    /** The public URL if the calendar is published, else null (CS:publish-url). */
+    publishedUrl(principal: P, calendar: Calendar): Promise<string | null>;
+    /** Publish and return the public URL (absolute, e.g. `webcal://…` or `https://…`). */
+    publish(principal: P, calendar: Calendar): Promise<string>;
+    /** Stop publishing. Without it, unpublishing is accepted and nothing happens (the URL stays valid). */
+    unpublish?(principal: P, calendar: Calendar): Promise<void>;
+    /**
+     * Optional: let the server serve the feed itself, without login, at `<basePath>/public/<token>`
+     * (`.ics` may be appended). Return the calendar for a token, or null (404). Return URLs of that
+     * form from `publish` to use it.
+     */
+    resolveFeed?(token: string): Promise<{principal: P; calendar: Calendar} | null>;
+}
+
 /** An uploaded attachment (RFC 8607). */
 export interface AttachmentInput {
     filename: string;
@@ -401,6 +420,8 @@ export interface CalDavProvider<P extends Principal = Principal> {
     scheduling?: SchedulingProvider<P>;
     /** Enables sharing calendars from the client (Apple Calendar). */
     sharing?: SharingProvider<P>;
+    /** Enables publishing calendars as public feeds (Apple's "Public Calendar"). */
+    publishing?: PublishingProvider<P>;
     /** Enables managed attachments (RFC 8607). */
     attachments?: AttachmentProvider<P>;
     /** Enables LOCK/UNLOCK (WebDAV class 2). None of the common CalDAV clients needs it. */

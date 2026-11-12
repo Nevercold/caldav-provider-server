@@ -16,7 +16,7 @@ describe('discovery', () => {
         const {request} = setup();
         const res = await request('OPTIONS', '/dav/', {user: null});
         expect(res.status).toBe(200);
-        expect(res.headers.DAV).toBe('1, 3, access-control, calendar-access, calendar-auto-schedule, extended-mkcol, calendarserver-sharing, calendar-managed-attachments');
+        expect(res.headers.DAV).toBe('1, 3, access-control, calendar-access, calendar-auto-schedule, extended-mkcol, calendarserver-sharing, resource-sharing, calendar-managed-attachments');
         expect(res.headers.Allow).toContain('REPORT');
     });
 

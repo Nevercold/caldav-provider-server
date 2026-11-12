@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {type Context, normalizeAddress, notificationName, type Resource} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {type CalDavResponse, xmlResponse} from './http.ts';
-import type {Invitation, ShareAccess, ShareChanges, ShareStatus} from './types.ts';
+import type {CalDavProvider, Invitation, Principal, ShareAccess, ShareChanges, ShareStatus} from './types.ts';
 import {cal, child, children, d, el, is, NS, serialize, textOf, type XmlElement, type XNode} from './xml.ts';
 
 /*
@@ -113,6 +113,104 @@ export async function handleShare(ctx: Context, r: Extract<Resource, {kind: 'cal
     }
     await sharing.share(ctx.principal, r.calendar, changes);
     return {status: 200, headers: {}};
+}
+
+/**
+ * POST DAV:share-resource (draft-pot-webdav-resource-sharing): the owner side of the
+ * standardized sharing draft, mapped onto the same `share` hook.
+ */
+export async function handleShareResource(ctx: Context, r: Extract<Resource, {kind: 'calendar'}>, root: XmlElement): Promise<CalDavResponse> {
+    const sharing = ctx.provider.sharing;
+    if (!sharing || !ctx.writable) throw CalDavError.forbidden('sharing is not allowed');
+    if (r.calendar.sharedBy) throw CalDavError.forbidden('a shared calendar cannot be shared further');
+    const changes: ShareChanges = {set: [], remove: []};
+    for (const sharee of children(root).filter((c) => is(c, NS.DAV, 'sharee'))) {
+        const address = textOf(child(sharee, NS.DAV, 'href'));
+        if (!address) continue;
+        const access = child(sharee, NS.DAV, 'share-access');
+        if (child(access, NS.DAV, 'no-access')) {
+            changes.remove.push(mailto(address));
+            continue;
+        }
+        changes.set.push({
+            address: mailto(address),
+            displayName: textOf(child(child(sharee, NS.DAV, 'prop'), NS.DAV, 'displayname')) || undefined,
+            summary: textOf(child(sharee, NS.DAV, 'comment')) || undefined,
+            access: child(access, NS.DAV, 'read-write') ? 'read-write' : 'read',
+        });
+    }
+    await sharing.share(ctx.principal, r.calendar, changes);
+    return {status: 200, headers: {}};
+}
+
+/** DAV:share-access of a calendar (draft-pot-webdav-resource-sharing 4.4.1). */
+export function shareAccessProperty(ctx: Context, r: Resource): XNode[] | undefined {
+    if (!ctx.provider.sharing || r.kind !== 'calendar') return undefined;
+    const c = r.calendar;
+    if (c.sharedBy) return [d(c.readOnly ? 'read' : 'read-write')];
+    return [d(c.shared ? 'shared-owner' : 'not-shared')];
+}
+
+/** DAV:invite of a calendar in the draft's format. */
+export async function draftInviteProperty(ctx: Context, r: Resource): Promise<XNode[] | undefined> {
+    const sharing = ctx.provider.sharing;
+    if (!sharing || r.kind !== 'calendar' || !r.calendar.shared || r.calendar.sharedBy) return r.kind === 'calendar' && sharing ? [] : undefined;
+    const sharees = await sharing.sharees(ctx.principal, r.calendar);
+    return sharees.map((s) =>
+        d(
+            'sharee',
+            d('href', mailto(s.address)),
+            s.displayName ? d('prop', d('displayname', s.displayName)) : null,
+            d(s.status === 'accepted' ? 'invite-accepted' : s.status === 'declined' ? 'invite-declined' : 'invite-noresponse'),
+            d('share-access', d(s.access === 'read-write' ? 'read-write' : 'read')),
+        ),
+    );
+}
+
+/** POST CS:publish-calendar / CS:unpublish-calendar to a calendar. */
+export async function handlePublish(ctx: Context, r: Extract<Resource, {kind: 'calendar'}>, publish: boolean): Promise<CalDavResponse> {
+    const publishing = ctx.provider.publishing;
+    if (!publishing || !ctx.writable || r.calendar.sharedBy || r.calendar.readOnly) {
+        throw CalDavError.forbidden('publishing is not allowed');
+    }
+    if (publish) await publishing.publish(ctx.principal, r.calendar);
+    else await publishing.unpublish?.(ctx.principal, r.calendar);
+    return {status: 200, headers: {}};
+}
+
+/** All objects of a calendar as one VCALENDAR (for a public feed). */
+export function mergeCalendar(name: string, objects: {ics: string}[]): string {
+    const zones = new Map<string, string>();
+    const comps: string[] = [];
+    for (const o of objects) {
+        const text = o.ics.replace(/\r?\n/g, '\r\n');
+        for (const m of text.matchAll(/BEGIN:(VTIMEZONE|VEVENT|VTODO)\r\n[\s\S]*?END:\1\r\n/g)) {
+            if (m[1] === 'VTIMEZONE') {
+                const tzid = /^TZID:(.+)$/m.exec(m[0])?.[1]?.trim() ?? m[0];
+                if (!zones.has(tzid)) zones.set(tzid, m[0]);
+            } else {
+                comps.push(m[0]);
+            }
+        }
+    }
+    const escaped = name.replace(/[\\;,]/g, (c) => `\\${c}`).replace(/\r?\n/g, '\\n');
+    return [
+        'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//caldav-provider-server//EN\r\n',
+        `X-WR-CALNAME:${escaped}\r\n`,
+        ...zones.values(),
+        ...comps,
+        'END:VCALENDAR\r\n',
+    ].join('');
+}
+
+/** GET <base>/public/<token>: the published feed, without login. */
+export async function publicFeed<P extends Principal>(provider: CalDavProvider<P>, token: string, head: boolean): Promise<CalDavResponse> {
+    const resolve = provider.publishing?.resolveFeed;
+    const found = resolve ? await resolve(token.replace(/\.ics$/i, '')) : null;
+    if (!found) throw CalDavError.notFound();
+    const objects = await provider.listObjects(found.principal, found.calendar, {});
+    const body = mergeCalendar(found.calendar.displayName, objects);
+    return {status: 200, headers: {'Content-Type': 'text/calendar; charset=utf-8'}, body: head ? undefined : body};
 }
 
 /** POST CS:invite-reply to the calendar home: the sharee accepts or declines. */

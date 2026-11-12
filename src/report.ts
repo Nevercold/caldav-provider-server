@@ -1,4 +1,5 @@
 import {type Context, homeSyncToken, normalizeAddresses, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
+import {parseCalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
 import {floatingZoneOf, freeBusyQuery} from './freebusy.ts';
@@ -269,6 +270,7 @@ function principalSearchPropertySet(ctx: Context): CalDavResponse {
 export async function handleReport(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
     const root = parseBody(req);
     if (!root) throw new CalDavError(400, 'REPORT needs a body');
+    ctx.calendarData = parseCalendarDataRequest(child(child(root, NS.DAV, 'prop'), NS.CALDAV, 'calendar-data'));
     if (is(root, NS.CALDAV, 'calendar-query')) return calendarQuery(ctx, root, path);
     if (is(root, NS.CALDAV, 'calendar-multiget')) return calendarMultiget(ctx, root, path);
     if (is(root, NS.CALDAV, 'free-busy-query')) return freeBusyQuery(ctx, root, path);

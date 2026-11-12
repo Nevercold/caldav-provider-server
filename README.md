@@ -7,7 +7,7 @@ reaches the server through a small provider interface you implement.
   as far as Apple Calendar, Apple Reminders, Thunderbird and DAVx⁵ need it
 - Events (`VEVENT`) and to-dos (`VTODO`), per calendar
 - `calendar-query` with time ranges, recurrence expansion and all CalDAV filters, `calendar-multiget`,
-  `free-busy-query`
+  `free-busy-query`; partial `calendar-data` (`comp`/`prop` selection, `expand`, `limit-recurrence-set`)
 - `sync-collection` ([RFC 6578](https://www.rfc-editor.org/rfc/rfc6578)) and CTags for cheap syncing
 - ETags with `If-Match` / `If-None-Match`, read-only calendars per user
 - Creating, renaming, recoloring and deleting calendars from the client (`MKCALENDAR`, extended `MKCOL`, `PROPPATCH`), if
@@ -361,7 +361,6 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 ## What is not supported
 
 - `PROPPATCH` of anything but calendars
-- Partial `calendar-data` (`<C:comp>`, `<C:expand>`, `<C:limit-recurrence-set>`): the full object is always returned
 - ACLs (`DAV:acl`), locking, `COPY`; `MOVE` only of objects between calendars (`moveObject`)
 - Reading other principals' resources: a found principal's URL answers 403; clients only need its search result
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)

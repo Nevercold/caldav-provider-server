@@ -98,8 +98,12 @@ export function el(ns: string, name: string, ...kids: Kid[]): XNode {
 export const d = (name: string, ...kids: Kid[]): XNode => el(NS.DAV, name, ...kids);
 export const cal = (name: string, ...kids: Kid[]): XNode => el(NS.CALDAV, name, ...kids);
 
+/**
+ * Escapes text and attribute values. CR is written as `&#13;`: XML parsers turn a raw CRLF into
+ * LF, and calendar-data must keep the CRLF line endings of iCalendar.
+ */
 export function escapeXml(s: string): string {
-    return s.replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]!);
+    return s.replace(/[&<>"\r]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\r': '&#13;'})[c]!);
 }
 
 /**

@@ -1,3 +1,5 @@
+import {applyCalendarData} from './calendardata.ts';
+import {floatingZoneOf} from './freebusy.ts';
 import {type Context, homeSyncToken, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
 import type {Calendar} from './types.ts';
@@ -214,7 +216,12 @@ def(NS.CALDAV, 'supported-calendar-data', (_ctx, r) =>
 def(
     NS.CALDAV,
     'calendar-data',
-    (_ctx, r) => ((r.kind === 'object' || r.kind === 'inbox-item') && r.object ? ok(r.object.ics) : undefined),
+    (ctx, r) => {
+        if ((r.kind !== 'object' && r.kind !== 'inbox-item') || !r.object) return undefined;
+        if (!ctx.calendarData) return ok(r.object.ics);
+        const floating = floatingZoneOf(r.kind === 'object' ? r.calendar.timezone : undefined);
+        return ok(applyCalendarData(r.object.ics, ctx.calendarData, floating));
+    },
     false,
 );
 

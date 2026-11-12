@@ -1,7 +1,7 @@
 import {type Component, DAY_MS, durationMs, ICAL, type Time, type TimeResolver} from './ical.ts';
 
 /** Upper bound of expanded occurrences per object, protects against runaway rules. */
-const MAX_OCCURRENCES = 20_000;
+export const MAX_OCCURRENCES = 20_000;
 
 export interface Range {
     /** Inclusive start in ms, -Infinity if open. */

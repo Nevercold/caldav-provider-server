@@ -1,3 +1,4 @@
+import type {CalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
 import type {Calendar, CalDavProvider, CalendarObject, Principal} from './types.ts';
 
@@ -56,6 +57,9 @@ export class Context<P extends Principal = Principal> {
     readonly provider: CalDavProvider<P>;
     readonly base: string;
     readonly principal: P;
+
+    /** The `calendar-data` a REPORT asked for, if it wants less than the full object. */
+    calendarData?: CalendarDataRequest;
 
     constructor(provider: CalDavProvider<P>, base: string, principal: P) {
         this.provider = provider;

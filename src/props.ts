@@ -19,6 +19,7 @@ function privileges(...names: [string, string][]): XNode[] {
 function privilegeSet(ctx: Context, r: Resource): XNode[] {
     const read: [string, string][] = [
         [NS.DAV, 'read'],
+        [NS.DAV, 'read-acl'],
         [NS.DAV, 'read-current-user-privilege-set'],
         [NS.CALDAV, 'read-free-busy'],
     ];
@@ -125,6 +126,45 @@ def(NS.DAV, 'principal-URL', (ctx, r) => (r.kind === 'principal' ? ok(href(ctx.p
 def(NS.DAV, 'owner', (ctx, r) => (r.kind === 'root' || r.kind === 'principals' ? undefined : ok(href(ctx.principalHref()))));
 def(NS.DAV, 'principal-collection-set', (ctx) => ok(href(ctx.principalsHref())));
 def(NS.DAV, 'current-user-privilege-set', (ctx, r) => privilegeSet(ctx, r));
+
+// --- Access control (RFC 3744), read-only: the provider decides who may do what ---
+
+/** The ACL is the signed-in user's own privileges, as one protected ACE. */
+def(
+    NS.DAV,
+    'acl',
+    (ctx, r) => ok(d('ace', d('principal', href(ctx.principalHref())), d('grant', ...privilegeSet(ctx, r)), d('protected'))),
+    false,
+);
+
+def(
+    NS.DAV,
+    'supported-privilege-set',
+    (_ctx, r) => {
+        const sp = (ns: string, name: string, ...kids: XNode[]) => d('supported-privilege', d('privilege', el(ns, name)), ...kids);
+        const extra =
+            r.kind === 'inbox' || r.kind === 'inbox-item'
+                ? [sp(NS.CALDAV, 'schedule-deliver')]
+                : r.kind === 'outbox'
+                  ? [sp(NS.CALDAV, 'schedule-send')]
+                  : [];
+        return ok(
+            d(
+                'supported-privilege',
+                d('privilege', d('all')),
+                d('abstract'),
+                sp(NS.DAV, 'read', sp(NS.DAV, 'read-acl'), sp(NS.DAV, 'read-current-user-privilege-set'), sp(NS.CALDAV, 'read-free-busy')),
+                sp(NS.DAV, 'write', sp(NS.DAV, 'write-properties'), sp(NS.DAV, 'write-content'), sp(NS.DAV, 'bind'), sp(NS.DAV, 'unbind')),
+                sp(NS.DAV, 'write-acl'),
+                ...extra,
+            ),
+        );
+    },
+    false,
+);
+
+def(NS.DAV, 'acl-restrictions', () => ok(d('grant-only'), d('no-invert')), false);
+def(NS.DAV, 'inherited-acl-set', () => ok(), false);
 
 def(NS.DAV, 'supported-report-set', (ctx, r) => {
     const report = (ns: string, name: string) => d('supported-report', d('report', el(ns, name)));

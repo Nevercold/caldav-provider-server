@@ -16,13 +16,13 @@ describe('discovery', () => {
         const {request} = setup();
         const res = await request('OPTIONS', '/dav/', {user: null});
         expect(res.status).toBe(200);
-        expect(res.headers.DAV).toBe('1, 3, calendar-access, calendar-auto-schedule, extended-mkcol');
+        expect(res.headers.DAV).toBe('1, 3, access-control, calendar-access, calendar-auto-schedule, extended-mkcol');
         expect(res.headers.Allow).toContain('REPORT');
     });
 
     it('leaves calendar-auto-schedule out without a scheduling provider', async () => {
         const {request} = setup({scheduling: false, calendarHooks: false});
-        expect((await request('OPTIONS', '/dav/')).headers.DAV).toBe('1, 3, calendar-access');
+        expect((await request('OPTIONS', '/dav/')).headers.DAV).toBe('1, 3, access-control, calendar-access');
     });
 
     it('asks for Basic credentials', async () => {
@@ -101,9 +101,25 @@ describe('discovery', () => {
         const body = PROPFIND('<d:current-user-privilege-set/>');
         const bob = props(await request('PROPFIND', '/dav/calendars/bob/', {user: 'bob', headers: {depth: '1'}, body}));
         expect(bob['/dav/calendars/bob/team/']!['current-user-privilege-set']).toBe(
-            'privilege(read) privilege(read-current-user-privilege-set) privilege(read-free-busy)',
+            'privilege(read) privilege(read-acl) privilege(read-current-user-privilege-set) privilege(read-free-busy)',
         );
         expect(bob['/dav/calendars/bob/todos/']!['current-user-privilege-set']).toContain('privilege(write)');
+    });
+
+    it('reports a read-only ACL and refuses ACL changes', async () => {
+        const {request} = setup();
+        const body = PROPFIND('<d:acl/><d:supported-privilege-set/><d:acl-restrictions/>');
+        const p = props(await request('PROPFIND', '/dav/calendars/bob/team/', {user: 'bob', headers: {depth: '0'}, body}))['/dav/calendars/bob/team/']!;
+        expect(p.acl).toBe(
+            'ace(principal(href(/dav/principals/bob/)) grant(privilege(read) privilege(read-acl) privilege(read-current-user-privilege-set) privilege(read-free-busy)) protected)',
+        );
+        expect(p['supported-privilege-set']).toContain('supported-privilege(privilege(write-properties))');
+        expect(p['acl-restrictions']).toBe('grant-only no-invert');
+        const all = props(await request('PROPFIND', '/dav/calendars/bob/team/', {user: 'bob', headers: {depth: '0'}}))['/dav/calendars/bob/team/']!;
+        expect(all.acl).toBeUndefined();
+        const acl = await request('ACL', '/dav/calendars/alice/personal/', {body: '<d:acl xmlns:d="DAV:"/>'});
+        expect(acl.status).toBe(403);
+        expect(acl.body).toContain('no-protected-ace-conflict');
     });
 
     it('answers allprop without calendar-data', async () => {

@@ -365,7 +365,9 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 ## What is not supported
 
 - `PROPPATCH` of anything but calendars
-- ACLs (`DAV:acl`), locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
+- Changing ACLs: `DAV:acl`, `supported-privilege-set` and `acl-restrictions` are reported (the user's own privileges
+  as one protected ACE), the `ACL` method answers 403; who may do what is up to the provider
+- Locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
   `putObject` and sends no invitations)
 - Other users' calendars: their principal URL answers with `getPrincipal`, their calendar home 403
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)

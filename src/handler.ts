@@ -23,7 +23,7 @@ export interface CalDavOptions<P extends Principal = Principal> {
 
 export type CalDavHandler = (request: CalDavRequest) => Promise<CalDavResponse>;
 
-const METHODS = ['OPTIONS', 'GET', 'HEAD', 'PUT', 'DELETE', 'PROPFIND', 'PROPPATCH', 'REPORT', 'POST', 'MKCOL', 'MKCALENDAR', 'MOVE', 'COPY'];
+const METHODS = ['OPTIONS', 'GET', 'HEAD', 'PUT', 'DELETE', 'PROPFIND', 'PROPPATCH', 'REPORT', 'POST', 'MKCOL', 'MKCALENDAR', 'MOVE', 'COPY', 'ACL'];
 
 /** HTTP methods the server answers; frameworks need to route these. */
 export const CALDAV_METHODS: readonly string[] = METHODS;
@@ -341,6 +341,7 @@ function davHeader(provider: CalDavProvider<never>): string {
     return [
         '1',
         '3',
+        'access-control',
         'calendar-access',
         ...(provider.scheduling ? ['calendar-auto-schedule'] : []),
         ...(provider.createCalendar ? ['extended-mkcol'] : []),
@@ -414,6 +415,9 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                 case 'COPY':
                     res = await copy(ctx, req, path);
                     break;
+                case 'ACL':
+                    // Every ACE is protected; access is up to the provider (RFC 3744 8.1.1).
+                    throw CalDavError.dav(403, 'no-protected-ace-conflict', 'the ACL cannot be changed');
                 default:
                     return {status: 405, headers: {Allow: METHODS.join(', ')}};
             }

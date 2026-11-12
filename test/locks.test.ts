@@ -60,6 +60,30 @@ describe('locking', () => {
         expect(conflict.body).toContain('no-conflicting-lock');
     });
 
+    it('with globalId a lock covers every URL of a shared calendar', async () => {
+        const {request} = await locked();
+        await request('PUT', '/dav/calendars/alice/todos/t.ics', {body: ics('VTODO', 't')});
+        const token = tokenOf(await request('LOCK', '/dav/calendars/alice/todos/', {body: lockinfo()}));
+        // Bob reaches the same calendar under his own URL.
+        const bobTodo = '/dav/calendars/bob/todos/t.ics';
+        expect((await request('PUT', bobTodo, {user: 'bob', body: ics('VTODO', 't')})).status).toBe(423);
+        const p = props(await request('PROPFIND', bobTodo, {user: 'bob', headers: {depth: '0'}, body: PROPFIND('<d:lockdiscovery/>')}))[bobTodo]!;
+        expect(p.lockdiscovery).toContain('lockroot(href(/dav/calendars/bob/todos/))');
+        expect((await request('PUT', '/dav/calendars/alice/todos/t.ics', {body: ics('VTODO', 't'), headers: {if: `(<${token}>)`}})).status).toBe(204);
+        expect((await request('UNLOCK', '/dav/calendars/alice/todos/', {headers: {'lock-token': `<${token}>`}})).status).toBe(204);
+        expect((await request('PUT', bobTodo, {user: 'bob', body: ics('VTODO', 't')})).status).toBe(204);
+    });
+
+    it('without globalId locks belong to the URL', async () => {
+        const {request, provider} = await locked();
+        const list = provider.listCalendars.bind(provider);
+        Object.assign(provider, {listCalendars: async (u: Parameters<typeof list>[0]) => (await list(u)).map(({globalId: _g, ...c}) => c)});
+        await request('PUT', '/dav/calendars/alice/todos/t.ics', {body: ics('VTODO', 't')});
+        await request('LOCK', '/dav/calendars/alice/todos/', {body: lockinfo()});
+        expect((await request('PUT', '/dav/calendars/alice/todos/t.ics', {body: ics('VTODO', 't')})).status).toBe(423);
+        expect((await request('PUT', '/dav/calendars/bob/todos/t.ics', {user: 'bob', body: ics('VTODO', 't')})).status).toBe(204);
+    });
+
     it('shared locks, refresh, UNLOCK errors and support', async () => {
         const {request, provider} = await locked();
         const a = tokenOf(await request('LOCK', OBJ, {body: lockinfo('shared')}));

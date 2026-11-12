@@ -42,6 +42,11 @@ export interface Calendar {
      * (schedule-calendar-transp, RFC 6638 9.1). Default false.
      */
     transparent?: boolean;
+    /**
+     * Server-wide id of the calendar, the same for every user who sees it (a shared calendar has
+     * one URL per user). Only used for locks: with it, a lock covers the calendar under all its URLs.
+     */
+    globalId?: string;
     /** Largest object in bytes clients may store here (max-resource-size); overrides `maxObjectSize`. */
     maxResourceSize?: number;
     /** The user's own calendar, shared with others (Apple shows it as shared). */

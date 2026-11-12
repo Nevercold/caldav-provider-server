@@ -495,6 +495,10 @@ const provider = {...myProvider, locks: new MemoryLocks()};
 For several instances, implement `LockProvider` (`find`, `findBelow`, `save`, `remove`) on a shared store such as
 Redis or your database. Timeouts default to an hour and are capped at a day.
 
+Locks belong to a URL. A calendar shared between users has one URL per user; give it a `globalId` (the same for
+everybody, e.g. your database id) and a lock covers it under all of them. Locks are then stored under
+`calendar:<globalId>/…` instead of the path.
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -536,8 +540,7 @@ more properties; check a setup with the example server below, and `RECORD=…` t
   as one protected ACE), the `ACL` method answers 403; who may do what is up to the provider
 - Other users' calendars without a delegation: their principal URL answers with `getPrincipal`, their calendar
   home 403
-- Locks of unmapped URLs (they would create empty resources). Locks belong to a URL: a shared calendar reached through
-  another user's URL is not covered by them
+- Locks of unmapped URLs (they would create empty resources)
 - The invitee side of the WebDAV resource sharing draft (its notifications and replies); invitees use
   CalendarServer's notifications
 

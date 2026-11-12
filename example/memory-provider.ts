@@ -116,7 +116,13 @@ export class MemoryProvider implements CalDavProvider<User> {
     }
 
     private toCalendar(cal: StoredCalendar, userId: string): Calendar {
-        const calendar: Calendar = {...cal.meta, syncToken: String(this.currentVersion(cal)), readOnly: cal.members.get(userId)!.readOnly};
+        // Ids are server-wide here, so they double as globalId (locks across users).
+        const calendar: Calendar = {
+            ...cal.meta,
+            globalId: cal.meta.id,
+            syncToken: String(this.currentVersion(cal)),
+            readOnly: cal.members.get(userId)!.readOnly,
+        };
         const user = this.users.get(userId);
         const owner = cal.owner ? this.users.get(cal.owner) : undefined;
         if (cal.owner === userId && cal.shares.size) calendar.shared = true;

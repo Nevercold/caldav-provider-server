@@ -1,4 +1,6 @@
 import {
+    type AttachmentInput,
+    type AttachmentProvider,
     CalDavError,
     type CalDavProvider,
     type Calendar,
@@ -132,6 +134,35 @@ export class MemoryProvider implements CalDavProvider<User> {
         for (const [address, entry] of cal.shares) if (mine.has(address)) return entry;
         return undefined;
     }
+
+    /** Attachment files by managed id. */
+    readonly files: Map<string, {calendarId: string; input: AttachmentInput}> = new Map();
+
+    readonly attachments: AttachmentProvider<User> = {
+        add: async (principal, calendar, _name, input) => {
+            this.stored(principal, calendar);
+            const id = crypto.randomUUID();
+            this.files.set(id, {calendarId: calendar.id, input});
+            return id;
+        },
+        update: async (principal, calendar, _name, managedId, input) => {
+            this.stored(principal, calendar);
+            this.files.delete(managedId);
+            const id = crypto.randomUUID();
+            this.files.set(id, {calendarId: calendar.id, input});
+            return id;
+        },
+        remove: async (_principal, _calendar, _name, managedId) => {
+            this.files.delete(managedId);
+        },
+        // Readable for every member of the calendar the attachment belongs to.
+        get: async (principal, managedId) => {
+            const file = this.files.get(managedId);
+            const cal = file && this.calendars.get(file.calendarId);
+            return file && cal?.members.has(principal.id) ? file.input : null;
+        },
+        maxSize: 10 * 1024 * 1024,
+    };
 
     readonly sharing: SharingProvider<User> = {
         sharees: async (principal, calendar) => {

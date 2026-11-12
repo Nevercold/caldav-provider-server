@@ -1,6 +1,6 @@
 import {type Context, normalizeAddress} from './context.ts';
 import {CalDavError} from './errors.ts';
-import {header, type CalDavRequest, type CalDavResponse, xmlResponse} from './http.ts';
+import {header, type CalDavResponse, type ParsedRequest as CalDavRequest, xmlResponse} from './http.ts';
 import {type Component, ICAL, IcsError, parseIcs, type Property, TimeResolver} from './ical.ts';
 import {busyOfCalendar, freeBusyLines, icsUtc, type Period, PRODID} from './freebusy.ts';
 import type {Range} from './timerange.ts';

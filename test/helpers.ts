@@ -2,11 +2,19 @@ import {MemoryProvider} from '../example/memory-provider.ts';
 import {type CalDavHandler, createCalDavHandler, type CalDavResponse} from '../src/index.ts';
 import {parseXml, type XmlElement} from '../src/xml.ts';
 
+/** A response with the body as text (the server only sends bytes for attachments). */
+export type TextResponse = Omit<CalDavResponse, 'body'> & {body?: string; bytes?: Uint8Array};
+
+export function asText(res: CalDavResponse): TextResponse {
+    if (typeof res.body === 'string' || res.body === undefined) return {...res, body: res.body};
+    return {...res, body: Buffer.from(res.body).toString('utf8'), bytes: res.body};
+}
+
 export type Request = (
     method: string,
     url: string,
-    init?: {user?: string | null; body?: string; headers?: Record<string, string>},
-) => Promise<CalDavResponse>;
+    init?: {user?: string | null; body?: string | Uint8Array; headers?: Record<string, string>},
+) => Promise<TextResponse>;
 
 export interface Setup {
     provider: MemoryProvider;
@@ -31,23 +39,23 @@ export function setup(options: {scheduling?: boolean; calendarHooks?: boolean} =
     async function request(
         method: string,
         url: string,
-        init: {user?: string | null; body?: string; headers?: Record<string, string>} = {},
-    ): Promise<CalDavResponse> {
+        init: {user?: string | null; body?: string | Uint8Array; headers?: Record<string, string>} = {},
+    ): Promise<TextResponse> {
         const headers: Record<string, string> = {...init.headers};
         const user = init.user === undefined ? 'alice' : init.user;
         if (user) headers.authorization = `Basic ${Buffer.from(`${user}:pw`).toString('base64')}`;
-        return handle({method, url, headers, body: init.body});
+        return asText(await handle({method, url, headers, body: init.body}));
     }
 
     return {provider, handle, request};
 }
 
-export function xml(res: CalDavResponse): XmlElement {
-    return parseXml(res.body)!;
+export function xml(res: CalDavResponse | TextResponse): XmlElement {
+    return parseXml(asText(res as CalDavResponse).body)!;
 }
 
 /** Map of href → {prop local name → text} for the 200 propstats of a multistatus. */
-export function props(res: CalDavResponse): Record<string, Record<string, string>> {
+export function props(res: CalDavResponse | TextResponse): Record<string, Record<string, string>> {
     const out: Record<string, Record<string, string>> = {};
     const doc = xml(res);
     for (const response of Array.from(doc.getElementsByTagNameNS('DAV:', 'response'))) {
@@ -80,7 +88,7 @@ function serializeInner(el: XmlElement): string {
 }
 
 /** Status code per property local name, from every propstat of the body (multistatus or mk*-response). */
-export function propStatuses(res: CalDavResponse): Record<string, number> {
+export function propStatuses(res: CalDavResponse | TextResponse): Record<string, number> {
     const out: Record<string, number> = {};
     for (const propstat of Array.from(xml(res).getElementsByTagNameNS('DAV:', 'propstat'))) {
         const status = Number(/ (\d{3})/.exec(propstat.getElementsByTagNameNS('DAV:', 'status')[0]!.textContent!)![1]);
@@ -93,7 +101,7 @@ export function propStatuses(res: CalDavResponse): Record<string, number> {
 }
 
 /** Status per href (responses without propstat). */
-export function statuses(res: CalDavResponse): Record<string, string> {
+export function statuses(res: CalDavResponse | TextResponse): Record<string, string> {
     const out: Record<string, string> = {};
     for (const response of Array.from(xml(res).getElementsByTagNameNS('DAV:', 'response'))) {
         const href = response.getElementsByTagNameNS('DAV:', 'href')[0]!.textContent!;

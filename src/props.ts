@@ -312,6 +312,19 @@ def(
     false,
 );
 
+// --- Managed attachments (RFC 8607) ---
+
+// Empty: attachments live on this server.
+def(NS.CALDAV, 'managed-attachments-server-URL', (ctx, r) => (r.kind === 'home' && ctx.provider.attachments ? ok() : undefined));
+def(NS.CALDAV, 'max-attachment-size', (ctx, r) => {
+    const max = ctx.provider.attachments?.maxSize;
+    return r.kind === 'home' && max !== undefined ? ok(String(max)) : undefined;
+});
+def(NS.CALDAV, 'max-attachments-per-resource', (ctx, r) => {
+    const max = ctx.provider.attachments?.maxPerObject;
+    return r.kind === 'home' && max !== undefined ? ok(String(max)) : undefined;
+});
+
 // --- Scheduling (RFC 6638) ---
 
 def(NS.CALDAV, 'calendar-user-address-set', (ctx, r) => {

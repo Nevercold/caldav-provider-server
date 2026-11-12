@@ -4,7 +4,7 @@ import {describe, expect, it} from 'vitest';
 import {MemoryProvider} from '../example/memory-provider.ts';
 import {type CalDavResponse, createCalDavHandler} from '../src/index.ts';
 import type {XmlElement} from '../src/xml.ts';
-import {ics, props, propStatuses, statuses, xml} from './helpers.ts';
+import {asText, ics, props, propStatuses, statuses, type TextResponse, xml} from './helpers.ts';
 
 /*
  * Request bodies of real clients, see test/fixtures/SOURCES.md. The fixtures
@@ -28,13 +28,15 @@ function server() {
     provider.seed('tasks', 'task2.ics', ics('VTODO', 'task2', 'SUMMARY:Done', 'STATUS:COMPLETED', 'COMPLETED:20250101T000000Z'));
     provider.seed('shared', 'busy.ics', ics('VEVENT', 'busy', 'DTSTART:20250115T100000Z', 'DTEND:20250115T110000Z'));
     const handle = createCalDavHandler({provider, onError: (e) => console.error(e)});
-    return (method: string, url: string, body: string, headers: Record<string, string> = {}): Promise<CalDavResponse> =>
-        handle({
-            method,
-            url,
-            body: body.replace(/>\/calendars\/user\//g, '>/dav/calendars/user/'),
-            headers: {authorization: `Basic ${btoa('user:pw')}`, ...headers},
-        });
+    return async (method: string, url: string, body: string, headers: Record<string, string> = {}): Promise<TextResponse> =>
+        asText(
+            await handle({
+                method,
+                url,
+                body: body.replace(/>\/calendars\/user\//g, '>/dav/calendars/user/'),
+                headers: {authorization: `Basic ${btoa('user:pw')}`, ...headers},
+            }),
+        );
 }
 
 const CAL = '/dav/calendars/user/calendar/';

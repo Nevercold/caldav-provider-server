@@ -1,6 +1,6 @@
 import type {Context, Resource} from './context.ts';
 import {CalDavError} from './errors.ts';
-import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
+import {type CalDavResponse, multistatus, parseBody, type ParsedRequest as CalDavRequest, xmlResponse} from './http.ts';
 import type {CalendarChanges, ComponentType, NewCalendar} from './types.ts';
 import {children, d, el, is, NS, type QName, qkey, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
 

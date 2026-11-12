@@ -1,3 +1,4 @@
+import {getAttachment, handleAttachmentPost, managedIdsOf} from './attachments.ts';
 import {deleteCalendar, mkcalendar, proppatchCollection} from './collections.ts';
 import {Context, notificationName, quoteEtag, type Resource, unquoteEtag} from './context.ts';
 import {handleInviteReply, handleShare, notificationBody, notificationEtag} from './sharing.ts';
@@ -7,7 +8,7 @@ import {allPropNames, propResponse} from './props.ts';
 import {handleReport} from './report.ts';
 import {handleOutboxPost, scheduleDelete, schedulePut} from './scheduling.ts';
 import type {CalDavProvider, CalendarObject, Principal} from './types.ts';
-import {type CalDavRequest, type CalDavResponse, errorResponse, header, multistatus, parseBody} from './http.ts';
+import {type CalDavRequest, type CalDavResponse, errorResponse, header, multistatus, normalizeRequest, parseBody, type ParsedRequest} from './http.ts';
 import {children, is, NS, type QName, qnameOf, type XNode} from './xml.ts';
 
 export type {CalDavRequest, CalDavResponse};
@@ -18,6 +19,11 @@ export interface CalDavOptions<P extends Principal = Principal> {
     basePath?: string;
     /** Realm of the Basic auth challenge. */
     realm?: string;
+    /**
+     * Scheme and host the server is reachable at, e.g. `https://cal.example.com`, for absolute
+     * URLs (attachments). Default: `X-Forwarded-Proto` (or `http`) and the `Host` header.
+     */
+    origin?: string;
     /** Called for unexpected errors (answered with 500). */
     onError?: (error: unknown, request: CalDavRequest) => void;
 }
@@ -39,7 +45,7 @@ function parseBasicAuth(value: string | undefined): {username: string; password:
 }
 
 /** Depth header; a missing header counts as the given default. */
-function depth(req: CalDavRequest, fallback: '0' | '1'): '0' | '1' {
+function depth(req: ParsedRequest, fallback: '0' | '1'): '0' | '1' {
     const v = header(req, 'depth')?.trim().toLowerCase();
     if (v === undefined || v === '') return fallback;
     if (v === '0' || v === '1') return v;
@@ -73,8 +79,10 @@ function exists(r: Resource): boolean {
 }
 
 /** POST: sharing on calendars and the calendar home, scheduling on the outbox. */
-async function post(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function post(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
+    const query = new URL(req.url, 'http://x').searchParams;
+    if (query.get('action')?.startsWith('attachment-')) return handleAttachmentPost(ctx, req, r, query);
     if (r.kind === 'calendar' || r.kind === 'home') {
         const root = parseBody(req);
         if (r.kind === 'calendar' && is(root, NS.CS, 'share')) return handleShare(ctx, r, root!);
@@ -84,7 +92,7 @@ async function post(ctx: Context, req: CalDavRequest, path: string): Promise<Cal
     return handleOutboxPost(ctx, req, path);
 }
 
-async function propfind(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function propfind(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const dep = depth(req, '1');
     const root = parseBody(req);
     let mode: 'prop' | 'allprop' | 'propname' = 'allprop';
@@ -112,7 +120,7 @@ async function propfind(ctx: Context, req: CalDavRequest, path: string): Promise
     return multistatus(responses);
 }
 
-async function proppatch(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function proppatch(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const target = await ctx.resolve(path);
     if (!exists(target)) throw CalDavError.notFound();
     return proppatchCollection(ctx, req, target);
@@ -130,6 +138,7 @@ function objectHeaders(ctx: Context, object: CalendarObject): Record<string, str
 
 async function get(ctx: Context, path: string, head: boolean): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
+    if (r.kind === 'attachment') return getAttachment(ctx, r.managedId, head);
     if (r.kind === 'notification') {
         if (!r.invitation) throw CalDavError.notFound();
         const body = notificationBody(ctx, r.invitation);
@@ -147,7 +156,7 @@ async function get(ctx: Context, path: string, head: boolean): Promise<CalDavRes
 }
 
 /** If-Match / If-None-Match (RFC 7232) and If-Schedule-Tag-Match (RFC 6638 8.3). */
-function checkPreconditions(ctx: Context, req: CalDavRequest, current: CalendarObject | null): string | undefined {
+function checkPreconditions(ctx: Context, req: ParsedRequest, current: CalendarObject | null): string | undefined {
     const tags = (v: string) => v.split(',').map((t) => t.trim()).filter(Boolean);
     const ifMatch = header(req, 'if-match');
     if (ifMatch !== undefined) {
@@ -174,7 +183,7 @@ function checkPreconditions(ctx: Context, req: CalDavRequest, current: CalendarO
     return ifMatch !== undefined && !tags(ifMatch).includes('*') && current ? unquoteEtag(current.etag) : undefined;
 }
 
-async function put(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function put(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
     if (r.kind !== 'object') throw new CalDavError(405, 'PUT is only supported on calendar objects');
     if (!ctx.canWrite(r.calendar)) throw CalDavError.forbidden('calendar is read-only');
@@ -232,7 +241,7 @@ function safeParse(ics: string): Component | null {
     }
 }
 
-async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function del(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
     if (r.kind === 'inbox-item') {
         if (!r.object) throw CalDavError.notFound();
@@ -254,6 +263,10 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
     if (!ctx.canDelete(r.calendar)) throw CalDavError.forbidden('calendar is read-only');
     const ifMatch = checkPreconditions(ctx, req, r.object);
     await ctx.provider.deleteObject!(ctx.principal, r.calendar, {name: r.name, ifMatch});
+    const attachments = ctx.provider.attachments;
+    if (attachments) {
+        for (const id of managedIdsOf(r.object.ics)) await attachments.remove(ctx.principal, r.calendar, r.name, id);
+    }
     if (ctx.scheduling) {
         const previous = safeParse(r.object.ics);
         const scheduleReply = header(req, 'schedule-reply')?.trim().toUpperCase() !== 'F';
@@ -269,7 +282,7 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
 /** Destination of a MOVE or COPY (RFC 4918 10.3): an object resource on this server. */
 async function destinationOf(
     ctx: Context,
-    req: CalDavRequest,
+    req: ParsedRequest,
     source: Extract<Resource, {kind: 'object'}>,
 ): Promise<Extract<Resource, {kind: 'object'}>> {
     const destination = header(req, 'destination');
@@ -308,7 +321,7 @@ function infoOf(ics: string) {
     }
 }
 
-async function move(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function move(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     if (!ctx.provider.moveObject) throw CalDavError.forbidden('MOVE is not supported');
     const r = await ctx.resolve(path);
     if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be moved');
@@ -333,7 +346,7 @@ async function move(ctx: Context, req: CalDavRequest, path: string): Promise<Cal
  * `putObject`. A copy within the same calendar would hold the UID twice (RFC 4791 5.3.2.1).
  * The copy is not scheduled: attendees already have the event.
  */
-async function copy(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
+async function copy(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
     if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be copied');
     if (!r.object) throw CalDavError.notFound();
@@ -380,6 +393,7 @@ function davHeader(provider: CalDavProvider<never>): string {
         ...(provider.scheduling ? ['calendar-auto-schedule'] : []),
         ...(provider.createCalendar ? ['extended-mkcol'] : []),
         ...(provider.sharing ? ['calendarserver-sharing'] : []),
+        ...(provider.attachments ? ['calendar-managed-attachments'] : []),
     ].join(', ');
 }
 
@@ -392,7 +406,7 @@ async function contextFor<P extends Principal>(provider: CalDavProvider<P>, base
     if (!provider.delegations) return ctx;
     const segs = ctx.segments(path);
     const owner = segs?.[1];
-    if (!segs || owner === undefined || owner === user.id || !['calendars', 'inbox', 'outbox', 'principals', 'notifications'].includes(segs[0]!)) return ctx;
+    if (!segs || owner === undefined || owner === user.id || !['calendars', 'inbox', 'outbox', 'principals', 'notifications', 'attachments'].includes(segs[0]!)) return ctx;
     const delegation = (await ctx.delegations()).find((d) => d.principal.id === owner);
     return delegation ? new Context(provider, base, delegation.principal, user, delegation.write) : ctx;
 }
@@ -410,7 +424,8 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
     const base = (options.basePath ?? '/dav').replace(/\/+$/, '');
     const realm = (options.realm ?? 'CalDAV').replace(/"/g, '');
 
-    return async (req) => {
+    return async (original) => {
+        const req = normalizeRequest(original);
         const method = req.method.toUpperCase();
         const path = new URL(req.url, 'http://x').pathname;
         try {
@@ -430,6 +445,8 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                 };
             }
             const ctx = await contextFor(provider, base, principal, path);
+            const proto = header(req, 'x-forwarded-proto')?.split(',')[0]?.trim() || 'http';
+            ctx.origin = (options.origin ?? `${proto}://${header(req, 'host') ?? 'localhost'}`).replace(/\/+$/, '');
             let res: CalDavResponse;
             switch (method) {
                 case 'PROPFIND':
@@ -474,7 +491,7 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
             return res;
         } catch (e) {
             if (e instanceof CalDavError) return errorResponse(e);
-            options.onError?.(e, req);
+            options.onError?.(e, original);
             return {status: 500, headers: {'Content-Type': 'text/plain'}, body: 'Internal Server Error'};
         }
     };

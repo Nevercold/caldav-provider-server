@@ -18,7 +18,9 @@ export type Resource =
     | {kind: 'outbox'}
     /** CalendarServer notification collection: invitations to shared calendars. */
     | {kind: 'notifications'}
-    | {kind: 'notification'; name: string; invitation: Invitation | null};
+    | {kind: 'notification'; name: string; invitation: Invitation | null}
+    /** A managed attachment (RFC 8607), served by the provider. */
+    | {kind: 'attachment'; managedId: string};
 
 const SYNC_PREFIX = 'http://caldav-provider-server/ns/sync/';
 
@@ -69,6 +71,9 @@ export class Context<P extends Principal = Principal> {
     readonly user: P;
     /** False if the user is a read-only delegate of `principal`. */
     readonly writable: boolean;
+
+    /** Scheme and host for absolute URLs, e.g. `https://cal.example.com` (attachment URLs). */
+    origin = '';
 
     /** The `calendar-data` a REPORT asked for, if it wants less than the full object. */
     calendarData?: CalendarDataRequest;
@@ -166,6 +171,10 @@ export class Context<P extends Principal = Principal> {
         return `${this.base}/inbox/${this.seg(this.principal.id)}/`;
     }
 
+    attachmentHref(managedId: string): string {
+        return `${this.base}/attachments/${this.seg(this.principal.id)}/${this.seg(managedId)}`;
+    }
+
     notificationsHref(): string {
         return `${this.base}/notifications/${this.seg(this.principal.id)}/`;
     }
@@ -209,6 +218,8 @@ export class Context<P extends Principal = Principal> {
                 return this.notificationsHref();
             case 'notification':
                 return `${this.notificationsHref()}${this.seg(r.name)}`;
+            case 'attachment':
+                return this.attachmentHref(r.managedId);
         }
     }
 
@@ -236,7 +247,7 @@ export class Context<P extends Principal = Principal> {
         if (!segs) throw CalDavError.notFound();
         const [area, owner, ...rest] = segs;
         if (!area) return {kind: 'root'};
-        if (!['principals', 'calendars', 'inbox', 'outbox', 'notifications'].includes(area)) throw CalDavError.notFound();
+        if (!['principals', 'calendars', 'inbox', 'outbox', 'notifications', 'attachments'].includes(area)) throw CalDavError.notFound();
         if (owner === undefined) {
             if (area === 'principals') return {kind: 'principals'};
             throw CalDavError.notFound();
@@ -263,6 +274,10 @@ export class Context<P extends Principal = Principal> {
             const group = rest.length === 1 ? /^calendar-proxy-(read|write)$/.exec(rest[0]!) : null;
             if (!group || !this.provider.delegates) throw CalDavError.notFound();
             return {kind: 'proxy-group', write: group[1] === 'write'};
+        }
+        if (area === 'attachments') {
+            if (!this.provider.attachments || rest.length !== 1) throw CalDavError.notFound();
+            return {kind: 'attachment', managedId: rest[0]!};
         }
         if (area === 'notifications') {
             if (!this.provider.sharing?.invitations || rest.length > 1) throw CalDavError.notFound();

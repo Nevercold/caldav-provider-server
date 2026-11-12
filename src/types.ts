@@ -283,6 +283,29 @@ export interface PrincipalSearchQuery {
     limit?: number;
 }
 
+/** An uploaded attachment (RFC 8607). */
+export interface AttachmentInput {
+    filename: string;
+    contentType: string;
+    data: Uint8Array;
+}
+
+/** Managed attachments (RFC 8607): the provider stores the files, the server keeps ATTACH in the objects. */
+export interface AttachmentProvider<P extends Principal = Principal> {
+    /** Store a new attachment of an object and return its id (URL-safe). */
+    add(principal: P, calendar: Calendar, objectName: string, input: AttachmentInput): Promise<string>;
+    /** Replace an attachment's content. Return the new id (RFC 8607 asks for a new one), or the same. */
+    update(principal: P, calendar: Calendar, objectName: string, managedId: string, input: AttachmentInput): Promise<string>;
+    /** The attachment is no longer referenced by the object. */
+    remove(principal: P, calendar: Calendar, objectName: string, managedId: string): Promise<void>;
+    /** Download, for everybody who can see an object referencing it. Null answers 404. */
+    get(principal: P, managedId: string): Promise<AttachmentInput | null>;
+    /** Largest attachment in bytes (max-attachment-size). */
+    maxSize?: number;
+    /** Most attachments per object (max-attachments-per-resource). */
+    maxPerObject?: number;
+}
+
 /** A principal whose calendars the user may use. */
 export interface Delegation<P extends Principal = Principal> {
     principal: P;
@@ -347,6 +370,8 @@ export interface CalDavProvider<P extends Principal = Principal> {
     scheduling?: SchedulingProvider<P>;
     /** Enables sharing calendars from the client (Apple Calendar). */
     sharing?: SharingProvider<P>;
+    /** Enables managed attachments (RFC 8607). */
+    attachments?: AttachmentProvider<P>;
     /**
      * Other calendar users the principal may find, e.g. to invite them
      * (principal-property-search, Apple's calendarserver-principal-search).

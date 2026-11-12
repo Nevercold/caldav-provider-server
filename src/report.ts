@@ -4,7 +4,7 @@ import {parseCalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
 import {floatingZoneOf, freeBusyQuery} from './freebusy.ts';
-import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
+import {type CalDavResponse, multistatus, parseBody, type ParsedRequest as CalDavRequest, xmlResponse} from './http.ts';
 import {parseIcs} from './ical.ts';
 import {getProp, propResponse, statusResponse} from './props.ts';
 import type {Calendar, CalendarObject, PrincipalSearchQuery} from './types.ts';

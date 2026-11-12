@@ -26,7 +26,8 @@ async function caldavPlugin(fastify: FastifyInstance, options: FastifyCalDavOpti
 
     // The plugin is encapsulated, so these parsers only apply to its routes.
     fastify.removeAllContentTypeParsers();
-    fastify.addContentTypeParser('*', {parseAs: 'string', bodyLimit: options.bodyLimit ?? 10 * 1024 * 1024}, (_req, body, done) => {
+    // Bytes, not text: attachment uploads are binary. The handler decodes the rest as UTF-8.
+    fastify.addContentTypeParser('*', {parseAs: 'buffer', bodyLimit: options.bodyLimit ?? 10 * 1024 * 1024}, (_req, body, done) => {
         done(null, body);
     });
 
@@ -41,7 +42,7 @@ async function caldavPlugin(fastify: FastifyInstance, options: FastifyCalDavOpti
                     method: request.method,
                     url: request.url,
                     headers: request.headers,
-                    body: typeof request.body === 'string' ? request.body : undefined,
+                    body: request.body instanceof Uint8Array || typeof request.body === 'string' ? request.body : undefined,
                 });
                 reply.code(res.status).headers(res.headers);
                 return reply.send(res.body ?? '');

@@ -16,13 +16,13 @@ describe('discovery', () => {
         const {request} = setup();
         const res = await request('OPTIONS', '/dav/', {user: null});
         expect(res.status).toBe(200);
-        expect(res.headers.DAV).toBe('1, 3, access-control, calendar-access, calendar-auto-schedule, extended-mkcol, calendarserver-sharing');
+        expect(res.headers.DAV).toBe('1, 3, access-control, calendar-access, calendar-auto-schedule, extended-mkcol, calendarserver-sharing, calendar-managed-attachments');
         expect(res.headers.Allow).toContain('REPORT');
     });
 
     it('leaves calendar-auto-schedule out without a scheduling provider', async () => {
         const {request, provider} = setup({scheduling: false, calendarHooks: false});
-        Object.assign(provider, {sharing: undefined});
+        Object.assign(provider, {sharing: undefined, attachments: undefined});
         expect((await request('OPTIONS', '/dav/')).headers.DAV).toBe('1, 3, access-control, calendar-access');
     });
 

@@ -124,6 +124,7 @@ becomes a 500 and is passed to `onError`.
 | `delegations(user)`                         | no       | whose calendars the user may use "on behalf of", see below      |
 | `delegates(principal)`, `setDelegates(…)`   | no       | the principal's delegates, shown and changed by clients         |
 | `sharing`                                   | no       | sharing calendars from the client (Apple Calendar), see below   |
+| `attachments`                               | no       | managed attachments (RFC 8607), see below                       |
 
 ### Principal
 
@@ -383,6 +384,38 @@ const sharing: SharingProvider<User> = {
   `CS:notification-URL`) with `sync-collection` support. The invitee POSTs `CS:invite-reply` to the calendar home,
   which calls `replyToInvitation`; `DELETE` of a notification calls `dismissInvitation`.
 
+### Attachments
+
+With an `attachments` provider, clients upload files to events and to-dos ([RFC 8607](https://www.rfc-editor.org/rfc/rfc8607)
+managed attachments, as Apple Calendar does). The provider stores the bytes; the server keeps the `ATTACH` properties
+of the object up to date (`MANAGED-ID`, `FILENAME`, `SIZE`, `FMTTYPE`, URL) and stores the object with `putObject`.
+
+```ts
+const attachments: AttachmentProvider<User> = {
+    async add(user, calendar, objectName, {filename, contentType, data}) {
+        return (await blobs.put({calendar: calendar.id, objectName, filename, contentType, data})).id;
+    },
+    async update(user, calendar, objectName, managedId, input) {
+        return (await blobs.replace(managedId, input)).id; // a new id, as RFC 8607 asks
+    },
+    async remove(user, calendar, objectName, managedId) {
+        await blobs.delete(managedId);
+    },
+    async get(user, managedId) {
+        return blobs.readIfVisibleTo(user, managedId); // {filename, contentType, data} or null
+    },
+    maxSize: 20 * 1024 * 1024,
+};
+```
+
+- `POST <object>?action=attachment-add` (optionally `&rid=` for single instances, `M` for the master),
+  `attachment-update&managed-id=…` and `attachment-remove&managed-id=…`. Deleting an object removes its attachments.
+- Files are downloaded from `/dav/attachments/<principal>/<managed-id>`. The URL in `ATTACH` is absolute; set the
+  `origin` option (e.g. `https://cal.example.com`) when the server runs behind a proxy, otherwise it is built from
+  `X-Forwarded-Proto` and `Host`.
+- Request bodies may be bytes (`Uint8Array`/`Buffer`); the Fastify plugin passes them through. Attachment downloads
+  answer with bytes as `body`.
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -428,7 +461,7 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - Other users' calendars: their principal URL answers with `getPrincipal`, their calendar home 403
 - Publishing calendars (`CS:can-be-published`, webcal) and the WebDAV resource sharing draft (`share-resource`,
   draft-pot-webdav-resource-sharing); sharing follows CalendarServer's model that Apple Calendar uses
-- Attachments (managed attachments, RFC 8607)
+- Inline attachments are stored as part of the object like any other property; there is no size check for them
 
 ## Example server
 

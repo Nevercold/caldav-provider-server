@@ -249,7 +249,7 @@ describe('COPY', () => {
         expect(same.body).toContain('no-uid-conflict');
         expect((await request('COPY', from, {headers: {destination: '/dav/calendars/alice/todos/c1.ics'}})).status).toBe(403);
         expect((await request('COPY', from, {headers: {destination: to, 'if-match': '"nope"'}})).status).toBe(412);
-        expect((await request('COPY', '/dav/calendars/alice/personal/', {headers: {destination: '/dav/calendars/alice/x/'}})).status).toBe(403);
+        expect((await request('COPY', '/dav/calendars/alice/personal/', {headers: {destination: '/dav/calendars/alice/personal/x.ics'}})).status).toBe(403);
         await request('PUT', '/dav/calendars/alice/team/t.ics', {body: ics('VEVENT', 't', 'DTSTART:20260601T100000Z')});
         const bob = await request('COPY', '/dav/calendars/bob/team/t.ics', {user: 'bob', headers: {destination: '/dav/calendars/bob/bobcal/t.ics'}});
         expect(bob.status).toBe(201);

@@ -118,6 +118,7 @@ becomes a 500 and is passed to `onError`.
 | `updateCalendar(principal, calendar, changes)` | no    | `PROPPATCH`: name, color, order, description, see below         |
 | `createCalendar(principal, id, calendar)`   | no       | `MKCALENDAR` / extended `MKCOL`: a new calendar                 |
 | `deleteCalendar(principal, calendar)`       | no       | `DELETE` of a whole calendar                                    |
+| `moveCalendar` / `copyCalendar(principal, calendar, newId)` | no | `MOVE` (new id) / `COPY` (duplicate) of a whole calendar |
 | `scheduling`                                | no       | enables RFC 6638, see below                                     |
 | `searchPrincipals(principal, query)`        | no       | other users to find, e.g. to invite them, see below             |
 | `getPrincipal(principal, id)`               | no       | another user by id, for a `PROPFIND` on their principal URL     |
@@ -246,6 +247,9 @@ async deleteCalendar(user, calendar) {
   and `updateCalendar` is not called. A `CalDavError` you throw sets the status of every property.
 - `readOnly` calendars can't be changed or deleted; the server answers 403 without calling the provider. Writable
   calendars report the `write-properties` privilege, the calendar home `bind` / `unbind` when the hooks exist.
+- `MOVE` of a calendar to `/calendars/<principal>/<new id>/` calls `moveCalendar` (a rename of the URL), `COPY`
+  calls `copyCalendar`. The destination must not exist; read-only calendars can be copied but not moved. Clients
+  rarely do this; generic WebDAV tools do.
 - `MKCALENDAR` takes the same properties and also accepts what clients send along: `calendar-timezone-id` (ignored)
   and `supported-calendar-component-set`, of which `VJOURNAL`
   is dropped as long as `VEVENT` or `VTODO` remains. Without a component set the calendar gets `VEVENT` and `VTODO`.
@@ -506,8 +510,6 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - `PROPPATCH` of anything but calendars
 - Changing ACLs: `DAV:acl`, `supported-privilege-set` and `acl-restrictions` are reported (the user's own privileges
   as one protected ACE), the `ACL` method answers 403; who may do what is up to the provider
-- `MOVE` and `COPY` of collections; objects move and copy between calendars (`COPY` stores the copy with `putObject`
-  and sends no invitations)
 - Other users' calendars without a delegation: their principal URL answers with `getPrincipal`, their calendar
   home 403
 - Locks of unmapped URLs (they would create empty resources). Locks belong to a URL: a shared calendar reached through

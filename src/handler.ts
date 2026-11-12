@@ -1,5 +1,5 @@
 import {getAttachment, handleAttachmentPost, managedIdsOf} from './attachments.ts';
-import {deleteCalendar, mkcalendar, proppatchCollection} from './collections.ts';
+import {deleteCalendar, mkcalendar, proppatchCollection, transferCalendar} from './collections.ts';
 import {canonicalPath, checkLocks, handleLock, handleUnlock} from './locks.ts';
 import {Context, notificationName, quoteEtag, type Resource, unquoteEtag} from './context.ts';
 import {
@@ -361,8 +361,9 @@ function infoOf(ics: string) {
 }
 
 async function move(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
-    if (!ctx.provider.moveObject) throw CalDavError.forbidden('MOVE is not supported');
     const r = await ctx.resolve(path);
+    if (r.kind === 'calendar') return transferCalendar(ctx, req, r, true);
+    if (!ctx.provider.moveObject) throw CalDavError.forbidden('MOVE is not supported');
     if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be moved');
     if (!r.object) throw CalDavError.notFound();
     const target = await destinationOf(ctx, req, r);
@@ -387,6 +388,7 @@ async function move(ctx: Context, req: ParsedRequest, path: string): Promise<Cal
  */
 async function copy(ctx: Context, req: ParsedRequest, path: string): Promise<CalDavResponse> {
     const r = await ctx.resolve(path);
+    if (r.kind === 'calendar') return transferCalendar(ctx, req, r, false);
     if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be copied');
     if (!r.object) throw CalDavError.notFound();
     const target = await destinationOf(ctx, req, r);

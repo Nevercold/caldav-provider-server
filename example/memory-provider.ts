@@ -354,6 +354,24 @@ export class MemoryProvider implements CalDavProvider<User> {
         this.calendars.get(id)!.touched = ++this.version;
     }
 
+    async moveCalendar(principal: User, calendar: Calendar, newId: string): Promise<void> {
+        const cal = this.stored(principal, calendar);
+        if (this.calendars.has(newId)) throw new CalDavError(409, 'calendar id is taken');
+        this.calendars.delete(calendar.id);
+        cal.meta = {...cal.meta, id: newId};
+        cal.touched = ++this.version;
+        this.calendars.set(newId, cal);
+    }
+
+    /** The copy belongs to the user alone. */
+    async copyCalendar(principal: User, calendar: Calendar, newId: string): Promise<void> {
+        const cal = this.stored(principal, calendar);
+        if (this.calendars.has(newId)) throw new CalDavError(409, 'calendar id is taken');
+        this.addCalendar({...cal.meta, id: newId}, {[principal.id]: 'write'});
+        const copy = this.calendars.get(newId)!;
+        for (const object of cal.objects.values()) this.write(copy, object.name, object.ics);
+    }
+
     async deleteCalendar(principal: User, calendar: Calendar): Promise<void> {
         const cal = this.stored(principal, calendar);
         if (cal.members.get(principal.id)!.readOnly) throw CalDavError.forbidden();

@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 import {CalDavError} from '../src/index.ts';
-import {PROPFIND, props, propStatuses, setup, xml} from './helpers.ts';
+import {ics, PROPFIND, props, propStatuses, setup, xml} from './helpers.ts';
 
 const CAL = '/dav/calendars/alice/personal/';
 const HOME = '/dav/calendars/alice/';
@@ -182,6 +182,40 @@ describe('DELETE of a calendar', () => {
     it('answers 403 for read-only calendars', async () => {
         const {request} = setup();
         expect((await request('DELETE', '/dav/calendars/bob/team/', {user: 'bob'})).status).toBe(403);
+    });
+});
+
+describe('MOVE and COPY of calendars', () => {
+    it('renames a calendar with MOVE', async () => {
+        const {request} = setup();
+        await request('PUT', `${CAL}a.ics`, {body: ics('VEVENT', 'a', 'DTSTART:20260601T100000Z')});
+        const res = await request('MOVE', CAL, {headers: {destination: `https://cal.example.com${HOME}work/`}});
+        expect(res.status).toBe(201);
+        expect(res.headers.Location).toBe(`${HOME}work/`);
+        expect((await request('GET', `${HOME}work/a.ics`)).status).toBe(200);
+        expect((await request('PROPFIND', CAL, {headers: {depth: '0'}})).status).toBe(404);
+    });
+
+    it('duplicates a calendar with COPY', async () => {
+        const {request} = setup();
+        await request('PUT', `${CAL}a.ics`, {body: ics('VEVENT', 'a', 'DTSTART:20260601T100000Z')});
+        expect((await request('COPY', CAL, {headers: {destination: `${HOME}copy/`}})).status).toBe(201);
+        expect((await request('GET', `${HOME}copy/a.ics`)).status).toBe(200);
+        expect((await request('GET', `${CAL}a.ics`)).status).toBe(200);
+    });
+
+    it('keeps the rules', async () => {
+        const {request, provider} = setup();
+        expect((await request('MOVE', CAL, {headers: {destination: `${HOME}todos/`, overwrite: 'F'}})).status).toBe(412);
+        expect((await request('MOVE', CAL, {headers: {destination: `${HOME}todos/`}})).status).toBe(403);
+        expect((await request('MOVE', CAL, {headers: {destination: '/dav/calendars/bob/x/'}})).status).toBe(403);
+        expect((await request('MOVE', CAL, {headers: {destination: `${HOME}x/y/`}})).status).toBe(403);
+        expect((await request('MOVE', '/dav/calendars/bob/team/', {user: 'bob', headers: {destination: '/dav/calendars/bob/t2/'}})).status).toBe(403);
+        // A read-only calendar can still be copied.
+        expect((await request('COPY', '/dav/calendars/bob/team/', {user: 'bob', headers: {destination: '/dav/calendars/bob/t2/'}})).status).toBe(201);
+        Object.assign(provider, {moveCalendar: undefined, copyCalendar: undefined});
+        expect((await request('MOVE', CAL, {headers: {destination: `${HOME}x/`}})).status).toBe(403);
+        expect((await request('COPY', CAL, {headers: {destination: `${HOME}x/`}})).status).toBe(403);
     });
 });
 

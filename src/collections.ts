@@ -1,6 +1,6 @@
 import type {Context, Resource} from './context.ts';
 import {CalDavError} from './errors.ts';
-import {type CalDavResponse, multistatus, parseBody, type ParsedRequest as CalDavRequest, xmlResponse} from './http.ts';
+import {type CalDavResponse, header, multistatus, parseBody, type ParsedRequest as CalDavRequest, xmlResponse} from './http.ts';
 import type {CalendarChanges, ComponentType, NewCalendar} from './types.ts';
 import {children, d, el, is, NS, type QName, qkey, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
 
@@ -226,6 +226,43 @@ export async function mkcalendar(ctx: Context, req: CalDavRequest, path: string,
         return xmlResponse(403, body);
     }
     await ctx.provider.createCalendar(ctx.principal, id, calendar);
+    return {status: 201, headers: {Location: ctx.calendarHref({id})}};
+}
+
+/**
+ * MOVE or COPY of a whole calendar to `/calendars/<principal>/<new id>/`, through
+ * `moveCalendar` / `copyCalendar`. The destination must not exist.
+ */
+export async function transferCalendar(
+    ctx: Context,
+    req: CalDavRequest,
+    source: Extract<Resource, {kind: 'calendar'}>,
+    move: boolean,
+): Promise<CalDavResponse> {
+    const hook = move ? ctx.provider.moveCalendar : ctx.provider.copyCalendar;
+    if (!hook || !ctx.writable) throw CalDavError.forbidden(`${move ? 'moving' : 'copying'} calendars is not supported`);
+    if (move && source.calendar.readOnly) throw CalDavError.forbidden('calendar is read-only');
+    const destination = header(req, 'destination');
+    if (!destination) throw new CalDavError(400, 'Destination header is missing');
+    let path: string;
+    try {
+        path = new URL(destination, 'http://x').pathname;
+    } catch {
+        throw new CalDavError(400, 'invalid Destination header');
+    }
+    const segs = ctx.segments(path);
+    if (!segs) throw new CalDavError(502, 'Destination is on another server');
+    if (segs[0] !== 'calendars' || segs.length !== 3 || segs[1] !== ctx.principal.id) {
+        throw CalDavError.forbidden('calendars can only be moved or copied within the calendar home');
+    }
+    const id = segs[2]!;
+    if (!id.trim()) throw new CalDavError(400, 'invalid calendar id');
+    if (id === source.calendar.id) throw CalDavError.forbidden('source and destination are the same');
+    if (await ctx.calendar(id)) {
+        if (header(req, 'overwrite')?.trim().toUpperCase() === 'F') throw CalDavError.preconditionFailed('destination exists');
+        throw CalDavError.forbidden('an existing calendar cannot be replaced');
+    }
+    await hook.call(ctx.provider, ctx.principal, source.calendar, id);
     return {status: 201, headers: {Location: ctx.calendarHref({id})}};
 }
 

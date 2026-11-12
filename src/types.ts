@@ -416,6 +416,10 @@ export interface CalDavProvider<P extends Principal = Principal> {
      * calendars that are `readOnly`. Without it, deleting answers 403.
      */
     deleteCalendar?(principal: P, calendar: Calendar): Promise<void>;
+    /** Give a calendar a new id, i.e. a new URL (MOVE of the collection). Without it, 403. */
+    moveCalendar?(principal: P, calendar: Calendar, newId: string): Promise<void>;
+    /** Duplicate a calendar with all objects under a new id (COPY of the collection). Without it, 403. */
+    copyCalendar?(principal: P, calendar: Calendar, newId: string): Promise<void>;
     /** Enables scheduling (RFC 6638). */
     scheduling?: SchedulingProvider<P>;
     /** Enables sharing calendars from the client (Apple Calendar). */

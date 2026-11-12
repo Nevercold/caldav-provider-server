@@ -84,6 +84,11 @@ export class Context<P extends Principal = Principal> {
         return !!this.provider.deleteObject && !calendar.readOnly;
     }
 
+    /** Name, color, order and description can be changed (PROPPATCH). */
+    canEditCalendar(calendar: Calendar): boolean {
+        return !!this.provider.updateCalendar && !calendar.readOnly;
+    }
+
     /** Lowercased `mailto:` addresses of the current principal. */
     addresses(): string[] {
         return normalizeAddresses(this.principal.addresses ?? []);
@@ -109,7 +114,7 @@ export class Context<P extends Principal = Principal> {
         return `${this.base}/calendars/${this.seg(this.principal.id)}/`;
     }
 
-    calendarHref(c: Calendar): string {
+    calendarHref(c: Pick<Calendar, 'id'>): string {
         return `${this.homeHref()}${this.seg(c.id)}/`;
     }
 

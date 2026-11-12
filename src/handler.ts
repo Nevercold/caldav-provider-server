@@ -1,3 +1,4 @@
+import {deleteCalendar, mkcalendar, proppatchCollection} from './collections.ts';
 import {Context, quoteEtag, type Resource, unquoteEtag} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {type Component, IcsError, inspectObject, parseIcs} from './ical.ts';
@@ -6,7 +7,7 @@ import {handleReport} from './report.ts';
 import {handleOutboxPost, scheduleDelete, schedulePut} from './scheduling.ts';
 import type {CalDavProvider, CalendarObject, Principal} from './types.ts';
 import {type CalDavRequest, type CalDavResponse, errorResponse, header, multistatus, parseBody} from './http.ts';
-import {children, d, el, is, NS, type QName, qnameOf, type XNode} from './xml.ts';
+import {children, is, NS, type QName, qnameOf, type XNode} from './xml.ts';
 
 export type {CalDavRequest, CalDavResponse};
 
@@ -93,24 +94,10 @@ async function propfind(ctx: Context, req: CalDavRequest, path: string): Promise
     return multistatus(responses);
 }
 
-/** PROPPATCH is not supported; every property answers 403 (RFC 4918 9.2). */
 async function proppatch(ctx: Context, req: CalDavRequest, path: string): Promise<CalDavResponse> {
     const target = await ctx.resolve(path);
     if (!exists(target)) throw CalDavError.notFound();
-    const root = parseBody(req);
-    if (!is(root, NS.DAV, 'propertyupdate')) throw new CalDavError(400, 'expected DAV:propertyupdate');
-    const names: XNode[] = [];
-    for (const op of children(root)) {
-        for (const prop of children(op).filter((p) => is(p, NS.DAV, 'prop'))) {
-            for (const p of children(prop)) {
-                const q = qnameOf(p);
-                names.push(el(q.ns, q.name));
-            }
-        }
-    }
-    return multistatus([
-        d('response', d('href', ctx.href(target)), d('propstat', d('prop', ...names), d('status', 'HTTP/1.1 403 Forbidden'))),
-    ]);
+    return proppatchCollection(ctx, req, target);
 }
 
 function objectHeaders(ctx: Context, object: CalendarObject): Record<string, string> {
@@ -227,7 +214,8 @@ async function del(ctx: Context, req: CalDavRequest, path: string): Promise<CalD
         await s.deleteInboxItem(ctx.principal, r.name);
         return {status: 204, headers: {}};
     }
-    if (r.kind !== 'object') throw CalDavError.forbidden('only calendar objects can be deleted');
+    if (r.kind === 'calendar') return deleteCalendar(ctx, r);
+    if (r.kind !== 'object') throw CalDavError.forbidden('only calendars and calendar objects can be deleted');
     if (!r.object) throw CalDavError.notFound();
     if (!ctx.canDelete(r.calendar)) throw CalDavError.forbidden('calendar is read-only');
     const ifMatch = checkPreconditions(ctx, req, r.object);
@@ -304,7 +292,13 @@ function optionsResponse(provider: CalDavProvider<never>): CalDavResponse {
 }
 
 function davHeader(provider: CalDavProvider<never>): string {
-    return ['1', '3', 'calendar-access', ...(provider.scheduling ? ['calendar-auto-schedule'] : [])].join(', ');
+    return [
+        '1',
+        '3',
+        'calendar-access',
+        ...(provider.scheduling ? ['calendar-auto-schedule'] : []),
+        ...(provider.createCalendar ? ['extended-mkcol'] : []),
+    ].join(', ');
 }
 
 /**
@@ -369,6 +363,8 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
                     break;
                 case 'MKCOL':
                 case 'MKCALENDAR':
+                    res = await mkcalendar(ctx, req, path, method);
+                    break;
                 case 'COPY':
                     throw CalDavError.forbidden(`${method} is not supported`);
                 default:

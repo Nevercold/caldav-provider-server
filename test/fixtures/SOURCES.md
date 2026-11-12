@@ -64,6 +64,13 @@ URL prefixes used below:
 | `apple-calendar/12-report-sync-collection-calendar.xml` | iCal 5 / OS X 10.7 (also used by the 10.11 profile) | REPORT calendar collection, `Depth: 1` | same template as 11, with a token |
 | `apple-calendar/13-report-calendar-multiget.xml` | iCal 5 / OS X 10.7 (also used by the 10.11 profile) | REPORT calendar collection, no Depth header | `CCS/request-data/OS_X_10_7/poll_calendar_multiget.request` + `CCS/request-data/OS_X_10_7/poll_calendar_multiget_hrefs.request`; `CCS/ical.py#L1300-L1317`. Note the blank line before the closing tag (the template ends the `%(hrefs)s` line with a newline and each href line also ends with one). |
 | `apple-calendar/14-propfind-inbox-depth1.xml` | OS X 10.11 Calendar | PROPFIND schedule inbox, `Depth: 1` | `CCS/request-data/OS_X_10_11/poll_inbox_propfind.request`; `CCS/ical.py#L1592-L1602` |
+| `apple-calendar/16-proppatch-calendar-color.xml` | OS X 10.11 Calendar | PROPPATCH calendar collection, `Content-Type: text/xml`, no Depth header | `CCS/request-data/OS_X_10_11/startup_calendar_color_proppatch.request`; sent by `CCS/ical.py#L699-L715` for every calendar from the startup loop `#L1552-L1567` |
+| `apple-calendar/17-proppatch-calendar-order.xml` | OS X 10.11 Calendar | PROPPATCH calendar collection | `CCS/request-data/OS_X_10_11/startup_calendar_order_proppatch.request`; same |
+| `apple-calendar/18-proppatch-calendar-timezone.xml` | OS X 10.11 Calendar | PROPPATCH calendar collection | `CCS/request-data/OS_X_10_11/startup_calendar_timezone_proppatch.request`; same |
+| `apple-calendar/19-proppatch-calendar-displayname.xml` | OS X 10.11 Calendar | PROPPATCH calendar collection | `CCS/request-data/OS_X_10_11/startup_calendar_displayname_proppatch.request` (loaded but commented out in `CCS/ical.py#L2450`) |
+| `apple-calendar/20-proppatch-calendar-description.xml` | OS X 10.11 Calendar | PROPPATCH calendar collection | `CCS/request-data/OS_X_10_11/startup_calendar_description_proppatch.request.xml` (recording, not used by the simulator) |
+| `apple-calendar/21-proppatch-calendar-transparent.xml` | OS X 10.11 Calendar | PROPPATCH calendar collection | first of the two documents in `CCS/request-data/OS_X_10_11/startup_calendar_transparent_proppatch.request` (the file holds the `transparent` and the `opaque` variant, separated by a blank line; recording, not used by the simulator) |
+| `apple-calendar/22-mkcalendar.xml` | OS X 10.11 Calendar | MKCALENDAR new collection (a UUID below the calendar home) | `CCS/request-data/OS_X_10_11/startup_create_calendar.request`, loaded at `CCS/ical.py#L2448` but never sent by the simulator. Its `{name}` placeholders (Python `str.format`) are filled with `order` `2`, `component_type` `VEVENT`, `color` `1BADF8FF`, `name` `Work`; everything else byte-for-byte |
 | `apple-calendar/15-post-outbox-freebusy.ics` | iCal 4/5 (OS X 10.6/10.7, also used by the 10.11 profile) | POST schedule outbox, `Content-Type: text/calendar`, `Originator: mailto:user01@example.com`, `Recipient: mailto:user01@example.com, mailto:user02@example.com` | `CCS/request-data/OS_X_10_7/post_availability.request`; filled per `CCS/ical.py#L2129-L2201`. Not XML: iCalendar body. Line endings are mixed exactly as the simulator sends them (template lines LF, the substituted `ATTENDEE` and `X-CALENDARSERVER-MASK-UID` lines CRLF). |
 
 ## apple-reminders
@@ -85,6 +92,9 @@ calendar-query (`CCS/ical.py#L2626-L2645`, dispatch in `_updateCalendar` of clas
 | `apple-reminders/08-report-calendar-query-vevent-time-range.xml` | iOS 5.1 dataaccessd | REPORT calendar collection, `Depth: 1` (start-only time-range, `%(start-date)s` filled with `20241210`) | `CCS/request-data/iOS_5/poll_calendar_vevent_tr_query.request`; `CCS/ical.py#L2601-L2623` |
 | `apple-reminders/09-report-calendar-multiget-vtodo.xml` | iOS 5.1 dataaccessd | REPORT tasks collection, no Depth header | `CCS/request-data/iOS_5/poll_calendar_multiget.request` + `poll_calendar_multiget_hrefs.request`; `CCS/ical.py#L1300-L1317` |
 | `apple-reminders/10-propfind-inbox-depth1.xml` | iOS 5.1 dataaccessd | PROPFIND schedule inbox, `Depth: 1` | `CCS/request-data/iOS_5/poll_calendar_propfind_d1.request` |
+| `apple-reminders/11-proppatch-calendar-color.xml` | iOS 5.1 dataaccessd | PROPPATCH tasks collection, `Content-Type: text/xml` | `CCS/request-data/iOS_5/startup_calendar_color_proppatch.request`; sent by `CCS/ical.py#L699-L715` from the startup loop `#L1552-L1567` |
+| `apple-reminders/12-proppatch-calendar-order.xml` | iOS 5.1 dataaccessd | PROPPATCH tasks collection | `CCS/request-data/iOS_5/startup_calendar_order_proppatch.request`; same |
+| `apple-reminders/13-mkcalendar-vtodo.xml` | OS X 10.11 CalendarAgent (which also syncs the Reminders app) | MKCALENDAR new collection | the template of `apple-calendar/22` with `component_type` `VTODO`, `order` `3`, `color` `63DA38FF`, `name` `Groceries` |
 
 ## thunderbird
 
@@ -129,6 +139,8 @@ on update/delete (`DX/resource/remote/BaseWebDavCollection.kt#L60`, `#L165-L169`
 | `davx5/12-report-calendar-query-vevent.xml` | REPORT calendar collection, `Depth: 1` | `D4J/DavCalendar.kt#L60-L124` | same, "past days" setting unset (no time-range) |
 | `davx5/13-report-calendar-query-vtodo.xml` | REPORT task list collection, `Depth: 1` | `D4J/DavCalendar.kt#L60-L124` | `DX/sync/TaskSyncer.kt#L91` |
 | `davx5/14-report-calendar-multiget.xml` | REPORT calendar collection, no Depth header | `D4J/DavCalendar.kt#L143-L190` | `DX/resource/remote/CalDavCollection.kt#L56-L67` (two hrefs, neutral paths) |
+| `davx5/15-mkcalendar.xml` | MKCALENDAR new collection (a random UUID below the home set) | `DX/repository/DavCollectionRepository.kt#L354-L462` (`generateMkColXml`), sent with `D4J/DavResource.kt#L278-L300` (`mkCol`) | `DX/repository/DavCollectionRepository.kt#L136-L168`; name `Work`, description, color `0xFF2196F3`, timezone id `Europe/Berlin`, VEVENT and VJOURNAL without VTODO. The `calendar-timezone` element (VTIMEZONE from ical4j's registry, `#L419-L432`) is left out because the builder was run without ical4j; the real app also sends it for zone ids ical4j knows. The server reads it like Apple's `calendar-timezone` in `apple-calendar/22` |
+| `davx5/16-mkcalendar-all-components.xml` | MKCALENDAR new collection | same | name only, all component types (no `supported-calendar-component-set`) |
 
 ## Not found
 
@@ -141,8 +153,9 @@ on update/delete (`DX/resource/remote/BaseWebDavCollection.kt#L60`, `#L165-L169`
   apple-reminders fixtures are iOS 5 dataaccessd VTODO traffic.
 - **Apple VEVENT calendar-query with start and end on iOS**: only the start-only variant
   exists in CCS (`apple-reminders/08`); OS X 10.11 start+end is `apple-calendar/09`.
-- **Apple MKCALENDAR / PROPPATCH**: present in CCS (`OS_X_10_11/startup_create_calendar.request`,
-  `*_proppatch.request`) but not collected, as they are outside the requested set.
+- **Apple DELETE of a calendar, DAVx⁵ DELETE**: no body, so no fixture. DAVx⁵ sends a plain
+  `DELETE` (`DX/repository/DavCollectionRepository.kt#L192-L205`).
+- **Thunderbird MKCALENDAR / PROPPATCH**: the CalDAV provider in comm-central sends neither.
 - **Thunderbird calendar-query (VEVENT time-range or VTODO)**: Thunderbird does not send
   calendar-query at all; it lists with PROPFIND Depth 1 (`thunderbird/06`) or sync-collection,
   then fetches with calendar-multiget.

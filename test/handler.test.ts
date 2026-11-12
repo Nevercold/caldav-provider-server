@@ -16,12 +16,12 @@ describe('discovery', () => {
         const {request} = setup();
         const res = await request('OPTIONS', '/dav/', {user: null});
         expect(res.status).toBe(200);
-        expect(res.headers.DAV).toBe('1, 3, calendar-access, calendar-auto-schedule');
+        expect(res.headers.DAV).toBe('1, 3, calendar-access, calendar-auto-schedule, extended-mkcol');
         expect(res.headers.Allow).toContain('REPORT');
     });
 
     it('leaves calendar-auto-schedule out without a scheduling provider', async () => {
-        const {request} = setup({scheduling: false});
+        const {request} = setup({scheduling: false, calendarHooks: false});
         expect((await request('OPTIONS', '/dav/')).headers.DAV).toBe('1, 3, calendar-access');
     });
 
@@ -126,8 +126,8 @@ describe('discovery', () => {
         expect((await request('PROPFIND', '/dav/calendars/alice/nope/', {headers: {depth: '0'}})).status).toBe(404);
     });
 
-    it('answers PROPPATCH with 403 per property', async () => {
-        const {request} = setup();
+    it('answers PROPPATCH with 403 per property without updateCalendar', async () => {
+        const {request} = setup({calendarHooks: false});
         const res = await request('PROPPATCH', '/dav/calendars/alice/personal/', {
             body: '<d:propertyupdate xmlns:d="DAV:" xmlns:a="http://apple.com/ns/ical/"><d:set><d:prop><a:calendar-color>#000000</a:calendar-color></d:prop></d:set></d:propertyupdate>',
         });

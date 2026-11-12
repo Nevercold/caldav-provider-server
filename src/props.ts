@@ -35,6 +35,13 @@ function privilegeSet(ctx: Context, r: Resource): XNode[] {
             if (canDelete) set.push(write[2]!);
             // Some clients (Apple, Thunderbird) only look for the aggregate DAV:write.
             if (canWrite && canDelete) set.push([NS.DAV, 'write']);
+            if (r.kind === 'calendar' && ctx.canEditCalendar(r.calendar)) set.push([NS.DAV, 'write-properties']);
+            return privileges(...set);
+        }
+        case 'home': {
+            const set = [...read];
+            if (ctx.provider.createCalendar) set.push(write[1]!);
+            if (ctx.provider.deleteCalendar) set.push(write[2]!);
             return privileges(...set);
         }
         case 'inbox':

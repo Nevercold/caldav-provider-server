@@ -4,7 +4,7 @@ import {describe, expect, it} from 'vitest';
 import {MemoryProvider} from '../example/memory-provider.ts';
 import {type CalDavResponse, createCalDavHandler} from '../src/index.ts';
 import type {XmlElement} from '../src/xml.ts';
-import {ics, props, statuses, xml} from './helpers.ts';
+import {ics, props, propStatuses, statuses, xml} from './helpers.ts';
 
 /*
  * Request bodies of real clients, see test/fixtures/SOURCES.md. The fixtures
@@ -313,5 +313,101 @@ describe('DAVx⁵', () => {
         expect(m[`${CAL}event1.ics`]).toMatchObject({getcontenttype: 'text/calendar; charset=utf-8; component=vevent'});
         expect(m[`${CAL}event1.ics`]!['schedule-tag']).toBeDefined();
         expect(m[`${CAL}event2.ics`]!['calendar-data']).toContain('UID:event2');
+    });
+});
+
+describe('managing calendars', () => {
+    const XML = {'content-type': 'text/xml'};
+    const calendarProps = async (send: ReturnType<typeof server>, url: string) =>
+        props(
+            await send(
+                'PROPFIND',
+                url,
+                '<d:propfind xmlns:d="DAV:"><d:allprop/></d:propfind>',
+                {depth: '0'},
+            ),
+        )[url]!;
+
+    it('Apple Calendar changes color, order, name and description', async () => {
+        const send = server();
+        for (const [file, prop] of [
+            ['16-proppatch-calendar-color.xml', 'calendar-color'],
+            ['17-proppatch-calendar-order.xml', 'calendar-order'],
+            ['19-proppatch-calendar-displayname.xml', 'displayname'],
+            ['20-proppatch-calendar-description.xml', 'calendar-description'],
+        ] as const) {
+            const res = await send('PROPPATCH', CAL, fixture(`apple-calendar/${file}`), XML);
+            expect(res.status).toBe(207);
+            expect(propStatuses(res)).toEqual({[prop]: 200});
+        }
+        expect(await calendarProps(send, CAL)).toMatchObject({
+            'calendar-color': '#FD8208FF',
+            'calendar-order': '1',
+            displayname: 'calendar',
+            'calendar-description': 'some description',
+        });
+    });
+
+    it('Apple Calendar: calendar-timezone and transparency answer 403', async () => {
+        const send = server();
+        const tz = await send('PROPPATCH', CAL, fixture('apple-calendar/18-proppatch-calendar-timezone.xml'), XML);
+        expect(propStatuses(tz)).toEqual({'calendar-timezone': 403});
+        const transp = await send('PROPPATCH', CAL, fixture('apple-calendar/21-proppatch-calendar-transparent.xml'), XML);
+        expect(propStatuses(transp)).toEqual({'schedule-calendar-transp': 403});
+    });
+
+    it('read-only calendars answer 403', async () => {
+        const send = server();
+        const res = await send('PROPPATCH', '/dav/calendars/user/shared/', fixture('apple-calendar/16-proppatch-calendar-color.xml'), XML);
+        expect(propStatuses(res)).toEqual({'calendar-color': 403});
+    });
+
+    it('Apple Calendar creates a calendar', async () => {
+        const send = server();
+        const url = `${HOME}D6F3B2C1-0000-4000-8000-000000000001/`;
+        const res = await send('MKCALENDAR', url, fixture('apple-calendar/22-mkcalendar.xml'), XML);
+        expect(res.status).toBe(201);
+        expect(await calendarProps(send, url)).toMatchObject({
+            displayname: 'Work',
+            'calendar-color': '#1BADF8FF',
+            'calendar-order': '2',
+            'supported-calendar-component-set': 'comp[VEVENT]',
+            resourcetype: 'collection calendar',
+        });
+        const home = props(await send('PROPFIND', HOME, fixture('apple-calendar/06-propfind-calendar-home-depth1.xml'), {depth: '1'}));
+        expect(Object.keys(home)).toContain(url);
+    });
+
+    it('Apple Reminders changes color and order and creates a list', async () => {
+        const send = server();
+        for (const file of ['11-proppatch-calendar-color.xml', '12-proppatch-calendar-order.xml']) {
+            const res = await send('PROPPATCH', TASKS, fixture(`apple-reminders/${file}`), XML);
+            expect(Object.values(propStatuses(res))).toEqual([200]);
+        }
+        expect(await calendarProps(send, TASKS)).toMatchObject({'calendar-color': '#711A76', 'calendar-order': '0'});
+
+        const url = `${HOME}groceries/`;
+        expect((await send('MKCALENDAR', url, fixture('apple-reminders/13-mkcalendar-vtodo.xml'), XML)).status).toBe(201);
+        expect(await calendarProps(send, url)).toMatchObject({displayname: 'Groceries', 'supported-calendar-component-set': 'comp[VTODO]'});
+    });
+
+    it('DAVx⁵ creates calendars and deletes them', async () => {
+        const send = server();
+        const mk = {'content-type': 'application/xml; charset=UTF-8'};
+        const work = `${HOME}2f0c8a5e-5a4b-4c2e-9f61-0d6c2a1b7e10/`;
+        expect((await send('MKCALENDAR', work, fixture('davx5/15-mkcalendar.xml'), mk)).status).toBe(201);
+        // VJOURNAL isn't supported and dropped; VEVENT stays.
+        expect(await calendarProps(send, work)).toMatchObject({
+            displayname: 'Work',
+            'calendar-description': 'Shifts and meetings',
+            'calendar-color': '#2196F3',
+            'supported-calendar-component-set': 'comp[VEVENT]',
+        });
+        const all = `${HOME}everything/`;
+        expect((await send('MKCALENDAR', all, fixture('davx5/16-mkcalendar-all-components.xml'), mk)).status).toBe(201);
+        expect((await calendarProps(send, all))['supported-calendar-component-set']).toBe('comp[VEVENT] comp[VTODO]');
+
+        expect((await send('DELETE', work, '')).status).toBe(204);
+        expect((await send('PROPFIND', work, '', {depth: '0'})).status).toBe(404);
     });
 });

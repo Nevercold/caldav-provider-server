@@ -9,6 +9,8 @@ reaches the server through a small provider interface you implement.
 - `calendar-query` with time ranges, recurrence expansion and all CalDAV filters, `calendar-multiget`
 - `sync-collection` ([RFC 6578](https://www.rfc-editor.org/rfc/rfc6578)) and CTags for cheap syncing
 - ETags with `If-Match` / `If-None-Match`, read-only calendars per user
+- Creating, renaming, recoloring and deleting calendars from the client (`MKCALENDAR`, extended `MKCOL`, `PROPPATCH`), if
+  the provider allows it
 - Scheduling ([RFC 6638](https://www.rfc-editor.org/rfc/rfc6638)): invitations, replies and cancellations, free-busy
 - `/.well-known/caldav` ([RFC 6764](https://www.rfc-editor.org/rfc/rfc6764)), HTTP Basic auth
 - Fastify plugin, and a framework-independent handler `(request) → response` for anything else
@@ -112,6 +114,9 @@ becomes a 500 and is passed to `onError`.
 | `putObject(principal, calendar, input)`     | no       | create or replace; without it everything is read-only           |
 | `deleteObject(principal, calendar, input)`  | no       | delete                                                          |
 | `moveObject(principal, from, to, input)`    | no       | `MOVE` to another calendar (Apple Calendar moves events so)     |
+| `updateCalendar(principal, calendar, changes)` | no    | `PROPPATCH`: name, color, order, description, see below         |
+| `createCalendar(principal, id, calendar)`   | no       | `MKCALENDAR` / extended `MKCOL`: a new calendar                 |
+| `deleteCalendar(principal, calendar)`       | no       | `DELETE` of a whole calendar                                    |
 | `scheduling`                                | no       | enables RFC 6638, see below                                     |
 | `searchPrincipals(principal, query)`        | no       | other users to find, e.g. to invite them, see below             |
 
@@ -201,6 +206,39 @@ async changesSince(user, calendar, token) {
 ```
 
 Deleted objects need a tombstone (name and version) for as long as clients may come back with an old token.
+
+### Managing calendars
+
+Clients rename and recolor calendars with `PROPPATCH`, create them with `MKCALENDAR` (Apple, DAVx⁵) or extended
+`MKCOL` ([RFC 5689](https://www.rfc-editor.org/rfc/rfc5689)) and delete them with `DELETE`. Each needs its hook; without
+it the request answers 403 and the client keeps its old state.
+
+```ts
+async updateCalendar(user, calendar, {displayName, color, order, description}) {
+    // only the properties of the request are set; null means the client removed one
+    await db.calendars.update(calendar.id, {name: displayName, color, order, description});
+},
+async createCalendar(user, id, {displayName, color, order, description, components, timezone}) {
+    // id is the URL segment the client chose (often a UUID); listCalendars must return it afterwards
+    await db.calendars.insert({id, owner: user.id, name: displayName, color, order, description, components});
+},
+async deleteCalendar(user, calendar) {
+    await db.calendars.delete(calendar.id);
+},
+```
+
+- `PROPPATCH` handles `displayname`, `calendar-color` (`#RRGGBB` or `#RRGGBBAA`), `calendar-order` and
+  `calendar-description`. Other properties answer 403, invalid values 409. The update is atomic
+  ([RFC 4918 9.2](https://www.rfc-editor.org/rfc/rfc4918#section-9.2)): if one property fails, the others answer 424
+  and `updateCalendar` is not called. A `CalDavError` you throw sets the status of every property.
+- `readOnly` calendars can't be changed or deleted; the server answers 403 without calling the provider. Writable
+  calendars report the `write-properties` privilege, the calendar home `bind` / `unbind` when the hooks exist.
+- `MKCALENDAR` also accepts what clients send along: `calendar-timezone` (passed as `timezone`), `calendar-timezone-id`
+  (ignored), `schedule-calendar-transp` if it is `opaque`, and `supported-calendar-component-set`, of which `VJOURNAL`
+  is dropped as long as `VEVENT` or `VTODO` remains. Without a component set the calendar gets `VEVENT` and `VTODO`.
+  If a property can't be set, nothing is created (403 with `mkcalendar-response` / `mkcol-response`).
+- Change the calendar's `syncToken` when its properties change too, so the next home `sync-collection` reports the
+  calendar to the user's other devices.
 
 ### Scheduling
 
@@ -298,8 +336,13 @@ obtained in [`test/fixtures/SOURCES.md`](test/fixtures/SOURCES.md)).
 Notes per client:
 
 - **Apple Calendar** only shows calendars with `VEVENT`, **Apple Reminders** only those with `VTODO`. Shared
-  calendars without write privileges are reported read-only. A `PROPPATCH` (e.g. to change a calendar's color from
-  the client) is answered with 403; color and name come from the provider.
+  calendars without write privileges are reported read-only.
+- **Apple Calendar** sends `PROPPATCH` for `calendar-color`, `calendar-order` and `calendar-timezone` of every calendar
+  on startup and whenever the user changes them; with `updateCalendar` color and order are stored, the timezone answers
+  403. Color and order are per user in Apple's view: if your calendars are shared, one user's change reaches everybody.
+  New calendars and reminder lists come as `MKCALENDAR` with a UUID as id.
+- **DAVx⁵** creates calendars with `MKCALENDAR` (name, color, description, `calendar-timezone-id`, a component set if not
+  all types are wanted) and deletes them with `DELETE`. **Thunderbird** neither creates nor changes server calendars.
 - **Apple** polls the calendar home with `sync-collection`; the home sync token is computed from the calendars' tokens,
   so it needs no storage.
 - **Apple Calendar** moves an event to another calendar with `MOVE` (`Destination`, `Overwrite: F`); implement
@@ -315,7 +358,8 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 
 ## What is not supported
 
-- Creating, renaming or recoloring calendars from a client (`MKCALENDAR`, `PROPPATCH` answer 403)
+- `PROPPATCH` of properties other than name, color, order and description (e.g. `calendar-timezone`,
+  `schedule-calendar-transp`), and of anything but calendars
 - Partial `calendar-data` (`<C:comp>`, `<C:expand>`, `<C:limit-recurrence-set>`): the full object is always returned
 - `free-busy-query` REPORT, ACLs (`DAV:acl`), locking, `COPY`; `MOVE` only of objects between calendars (`moveObject`)
 - Reading other principals' resources: a found principal's URL answers 403; clients only need its search result

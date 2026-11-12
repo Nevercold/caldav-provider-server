@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="UTF-8"?><CAL:mkcalendar xmlns="DAV:" xmlns:CAL="urn:ietf:params:xml:ns:caldav" xmlns:CARD="urn:ietf:params:xml:ns:carddav"><set><prop><resourcetype><collection /><CAL:calendar /></resourcetype><displayname>Everything</displayname></prop></set></CAL:mkcalendar>

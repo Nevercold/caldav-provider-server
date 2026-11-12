@@ -14,7 +14,7 @@ export interface Setup {
     request: Request;
 }
 
-export function setup(options: {scheduling?: boolean} = {}): Setup {
+export function setup(options: {scheduling?: boolean; calendarHooks?: boolean} = {}): Setup {
     const provider = new MemoryProvider()
         .addUser({id: 'alice', username: 'alice', password: 'pw', displayName: 'Alice', addresses: ['alice@example.com']})
         .addUser({id: 'bob', username: 'bob', password: 'pw', displayName: 'Bob', addresses: ['mailto:bob@example.com']})
@@ -23,6 +23,9 @@ export function setup(options: {scheduling?: boolean} = {}): Setup {
         .addCalendar({id: 'team', displayName: 'Team', components: ['VEVENT'], description: 'Shared'}, {alice: 'write', bob: 'read'})
         .addCalendar({id: 'todos', displayName: 'To-dos', components: ['VTODO']}, {alice: 'write', bob: 'write'});
     if (options.scheduling === false) (provider as {scheduling?: unknown}).scheduling = undefined;
+    if (options.calendarHooks === false) {
+        Object.assign(provider, {updateCalendar: undefined, createCalendar: undefined, deleteCalendar: undefined});
+    }
     const handle = createCalDavHandler({provider, onError: (e) => console.error(e)});
 
     async function request(
@@ -74,6 +77,19 @@ function serializeInner(el: XmlElement): string {
             return `${e.localName}${name ? `[${name}]` : ''}${inner ? `(${inner})` : ''}`;
         })
         .join(' ');
+}
+
+/** Status code per property local name, from every propstat of the body (multistatus or mk*-response). */
+export function propStatuses(res: CalDavResponse): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const propstat of Array.from(xml(res).getElementsByTagNameNS('DAV:', 'propstat'))) {
+        const status = Number(/ (\d{3})/.exec(propstat.getElementsByTagNameNS('DAV:', 'status')[0]!.textContent!)![1]);
+        const prop = propstat.getElementsByTagNameNS('DAV:', 'prop')[0]!;
+        for (let n = prop.firstChild; n; n = n.nextSibling) {
+            if (n.nodeType === 1) out[(n as XmlElement).localName!] = status;
+        }
+    }
+    return out;
 }
 
 /** Status per href (responses without propstat). */

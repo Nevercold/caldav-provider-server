@@ -2,10 +2,12 @@ import {
     CalDavError,
     type CalDavProvider,
     type Calendar,
+    type CalendarChanges,
     type CalendarObject,
     type Changes,
     type ComponentType,
     type MoveObjectInput,
+    type NewCalendar,
     type Principal,
     type PrincipalSearchQuery,
     type PrincipalSearchResult,
@@ -26,6 +28,8 @@ interface StoredCalendar {
     /** Change log: version of the change, object name, deleted? */
     log: {version: number; name: string; deleted: boolean}[];
     members: Map<string, {readOnly: boolean}>;
+    /** Version of the last change of the calendar's properties. */
+    touched: number;
 }
 
 /**
@@ -54,6 +58,7 @@ export class MemoryProvider implements CalDavProvider<User> {
             meta,
             objects: new Map(),
             log: [],
+            touched: 0,
             members: new Map(Object.entries(members).map(([id, access]) => [id, {readOnly: access === 'read'}])),
         });
         return this;
@@ -80,9 +85,13 @@ export class MemoryProvider implements CalDavProvider<User> {
         return cal;
     }
 
+    /** Changes of objects and of properties both count, so other devices notice a rename. */
+    private currentVersion(cal: StoredCalendar): number {
+        return Math.max(cal.log.at(-1)?.version ?? 0, cal.touched);
+    }
+
     private toCalendar(cal: StoredCalendar, userId: string): Calendar {
-        const version = cal.log.at(-1)?.version ?? 0;
-        return {...cal.meta, syncToken: String(version), readOnly: cal.members.get(userId)!.readOnly};
+        return {...cal.meta, syncToken: String(this.currentVersion(cal)), readOnly: cal.members.get(userId)!.readOnly};
     }
 
     async authenticate(username: string, password: string): Promise<User | null> {
@@ -106,7 +115,7 @@ export class MemoryProvider implements CalDavProvider<User> {
     async changesSince(principal: User, calendar: Calendar, syncToken: string): Promise<Changes | null> {
         const cal = this.stored(principal, calendar);
         const since = Number(syncToken);
-        const current = cal.log.at(-1)?.version ?? 0;
+        const current = this.currentVersion(cal);
         if (!Number.isInteger(since) || since < 0 || since > current) return null;
         const touched = new Set(cal.log.filter((e) => e.version > since).map((e) => e.name));
         const changed: CalendarObject[] = [];
@@ -149,6 +158,32 @@ export class MemoryProvider implements CalDavProvider<User> {
         source.objects.delete(input.name);
         source.log.push({version: ++this.version, name: input.name, deleted: true});
         this.write(target, input.destinationName, object.ics);
+    }
+
+    async updateCalendar(principal: User, calendar: Calendar, changes: CalendarChanges): Promise<void> {
+        const cal = this.stored(principal, calendar);
+        if (cal.members.get(principal.id)!.readOnly) throw CalDavError.forbidden();
+        if (changes.displayName === null) throw new CalDavError(409, 'a calendar needs a name');
+        const meta: Record<string, unknown> = cal.meta;
+        for (const [key, value] of Object.entries(changes)) {
+            if (value === null) delete meta[key];
+            else meta[key] = value;
+        }
+        cal.touched = ++this.version;
+    }
+
+    /** New calendars belong to their creator alone. */
+    async createCalendar(principal: User, id: string, input: NewCalendar): Promise<void> {
+        if (this.calendars.has(id)) throw new CalDavError(409, 'calendar id is taken');
+        const {timezone: _timezone, ...meta} = input;
+        this.addCalendar({id, ...meta}, {[principal.id]: 'write'});
+        this.calendars.get(id)!.touched = ++this.version;
+    }
+
+    async deleteCalendar(principal: User, calendar: Calendar): Promise<void> {
+        const cal = this.stored(principal, calendar);
+        if (cal.members.get(principal.id)!.readOnly) throw CalDavError.forbidden();
+        this.calendars.delete(calendar.id);
     }
 
     /** Every other user whose name or address contains the terms (to invite them). */

@@ -117,6 +117,31 @@ export interface MoveObjectInput {
     ifMatch?: string;
 }
 
+/**
+ * Calendar properties a client changes with PROPPATCH. Only the properties of
+ * the request are present; `null` means the client removed the property.
+ */
+export interface CalendarChanges {
+    displayName?: string | null;
+    /** `#RRGGBB` or `#RRGGBBAA`. */
+    color?: string | null;
+    order?: number | null;
+    description?: string | null;
+}
+
+/** A calendar a client creates with MKCALENDAR or extended MKCOL. */
+export interface NewCalendar {
+    /** The client's name, or the id if it sent none. */
+    displayName: string;
+    color?: string;
+    order?: number;
+    description?: string;
+    /** From supported-calendar-component-set; `['VEVENT', 'VTODO']` if the client sent none. */
+    components: ComponentType[];
+    /** VCALENDAR with the VTIMEZONE the client sent (calendar-timezone), if any. */
+    timezone?: string;
+}
+
 /** An iTIP message (RFC 5546) the server wants delivered. */
 export interface SchedulingMessage<P extends Principal = Principal> {
     method: 'REQUEST' | 'REPLY' | 'CANCEL' | 'ADD' | 'REFRESH' | 'COUNTER' | 'DECLINECOUNTER' | 'PUBLISH';
@@ -220,6 +245,24 @@ export interface CalDavProvider<P extends Principal = Principal> {
      * attendees. Without it, MOVE answers 403 and clients fall back to PUT + DELETE.
      */
     moveObject?(principal: P, from: Calendar, to: Calendar, input: MoveObjectInput): Promise<void>;
+    /**
+     * Change name, color, order or description of a calendar (PROPPATCH). Called once per
+     * request with all changes, which must be applied all or none. Not called for calendars
+     * that are `readOnly`. Throw a `CalDavError` to reject; its status goes to every property.
+     * Without it, PROPPATCH answers 403 for every property.
+     */
+    updateCalendar?(principal: P, calendar: Calendar, changes: CalendarChanges): Promise<void>;
+    /**
+     * Create a calendar (MKCALENDAR, or extended MKCOL as some clients send it). `id` is the
+     * URL segment the client chose, often a UUID; afterwards `listCalendars` must return a
+     * calendar with this id. Throw a `CalDavError` to reject. Without it, creating answers 403.
+     */
+    createCalendar?(principal: P, id: string, calendar: NewCalendar): Promise<void>;
+    /**
+     * Delete a calendar with all its objects (DELETE on the collection). Not called for
+     * calendars that are `readOnly`. Without it, deleting answers 403.
+     */
+    deleteCalendar?(principal: P, calendar: Calendar): Promise<void>;
     /** Enables scheduling (RFC 6638). */
     scheduling?: SchedulingProvider<P>;
     /**

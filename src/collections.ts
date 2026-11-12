@@ -14,7 +14,23 @@ type Field = keyof CalendarChanges;
 const COLOR = /^#[0-9a-f]{6}([0-9a-f]{2})?$/i;
 
 /** Properties the provider stores. `parse` returns undefined for an invalid value (409). */
-const WRITABLE: Record<string, {field: Field; parse: (e: XmlElement) => string | number | undefined}> = {
+const WRITABLE: Record<string, {field: Field; parse: (e: XmlElement) => string | number | boolean | undefined}> = {
+    [qkey({ns: NS.CALDAV, name: 'calendar-timezone'})]: {
+        field: 'timezone',
+        parse: (e) => {
+            const tz = e.textContent ?? '';
+            return tz.includes('BEGIN:VTIMEZONE') ? tz : undefined;
+        },
+    },
+    [qkey({ns: NS.CALDAV, name: 'schedule-calendar-transp'})]: {
+        field: 'transparent',
+        parse: (e) => {
+            const kids = children(e);
+            if (kids.length !== 1) return undefined;
+            if (is(kids[0], NS.CALDAV, 'transparent')) return true;
+            return is(kids[0], NS.CALDAV, 'opaque') ? false : undefined;
+        },
+    },
     [qkey({ns: NS.DAV, name: 'displayname'})]: {field: 'displayName', parse: (e) => textOf(e)},
     [qkey({ns: NS.CALDAV, name: 'calendar-description'})]: {field: 'description', parse: (e) => textOf(e)},
     [qkey({ns: NS.APPLE, name: 'calendar-color'})]: {
@@ -102,8 +118,7 @@ const SUPPORTED: ComponentType[] = ['VEVENT', 'VTODO'];
 /**
  * Reads the properties of a MKCALENDAR or extended MKCOL body. Besides the writable properties
  * it accepts what clients send along when creating a calendar: resourcetype (DAVx⁵),
- * supported-calendar-component-set, calendar-timezone, calendar-timezone-id (RFC 7809, ignored)
- * and schedule-calendar-transp as long as it is opaque, the only value this server reports.
+ * supported-calendar-component-set and calendar-timezone-id (RFC 7809, ignored).
  */
 function readNewCalendar(
     id: string,
@@ -138,14 +153,8 @@ function readNewCalendar(
             const components = SUPPORTED.filter((s) => names.includes(s));
             if (components.length) calendar.components = components;
             else status = 403;
-        } else if (is(prop, NS.CALDAV, 'calendar-timezone')) {
-            const tz = prop.textContent ?? '';
-            if (tz.includes('BEGIN:VTIMEZONE')) calendar.timezone = tz;
-            else status = 409;
         } else if (is(prop, NS.CALDAV, 'calendar-timezone-id')) {
             // Accepted without effect: the VTIMEZONE comes with calendar-timezone.
-        } else if (is(prop, NS.CALDAV, 'schedule-calendar-transp')) {
-            if (!children(prop).some((k) => is(k, NS.CALDAV, 'opaque'))) status = 403;
         } else {
             status = 403;
         }

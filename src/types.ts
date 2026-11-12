@@ -37,6 +37,11 @@ export interface Calendar {
     readOnly?: boolean;
     /** VTIMEZONE (full VCALENDAR text) for floating times, see RFC 4791 5.2.2. */
     timezone?: string;
+    /**
+     * Events of this calendar don't make the user busy in free-busy lookups
+     * (schedule-calendar-transp, RFC 6638 9.1). Default false.
+     */
+    transparent?: boolean;
 }
 
 export interface CalendarObject {
@@ -127,6 +132,10 @@ export interface CalendarChanges {
     color?: string | null;
     order?: number | null;
     description?: string | null;
+    /** VCALENDAR with one VTIMEZONE (calendar-timezone). */
+    timezone?: string | null;
+    /** schedule-calendar-transp; `null` (removed) means opaque again. */
+    transparent?: boolean | null;
 }
 
 /** A calendar a client creates with MKCALENDAR or extended MKCOL. */
@@ -140,6 +149,8 @@ export interface NewCalendar {
     components: ComponentType[];
     /** VCALENDAR with the VTIMEZONE the client sent (calendar-timezone), if any. */
     timezone?: string;
+    /** The client asked for a transparent calendar (schedule-calendar-transp). */
+    transparent?: boolean;
 }
 
 /** An iTIP message (RFC 5546) the server wants delivered. */
@@ -246,7 +257,7 @@ export interface CalDavProvider<P extends Principal = Principal> {
      */
     moveObject?(principal: P, from: Calendar, to: Calendar, input: MoveObjectInput): Promise<void>;
     /**
-     * Change name, color, order or description of a calendar (PROPPATCH). Called once per
+     * Change name, color, order, description, timezone or transparency of a calendar (PROPPATCH). Called once per
      * request with all changes, which must be applied all or none. Not called for calendars
      * that are `readOnly`. Throw a `CalDavError` to reject; its status goes to every property.
      * Without it, PROPPATCH answers 403 for every property.

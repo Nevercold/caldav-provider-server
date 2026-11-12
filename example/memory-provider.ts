@@ -5,7 +5,6 @@ import {
     type CalendarChanges,
     type CalendarObject,
     type Changes,
-    type ComponentType,
     type MoveObjectInput,
     type NewCalendar,
     type Principal,
@@ -51,7 +50,7 @@ export class MemoryProvider implements CalDavProvider<User> {
     }
 
     addCalendar(
-        meta: {id: string; displayName: string; components: ComponentType[]; color?: string; description?: string; order?: number},
+        meta: Omit<Calendar, 'syncToken' | 'readOnly'>,
         members: Record<string, 'read' | 'write'>,
     ): this {
         this.calendars.set(meta.id, {
@@ -175,8 +174,7 @@ export class MemoryProvider implements CalDavProvider<User> {
     /** New calendars belong to their creator alone. */
     async createCalendar(principal: User, id: string, input: NewCalendar): Promise<void> {
         if (this.calendars.has(id)) throw new CalDavError(409, 'calendar id is taken');
-        const {timezone: _timezone, ...meta} = input;
-        this.addCalendar({id, ...meta}, {[principal.id]: 'write'});
+        this.addCalendar({id, ...input}, {[principal.id]: 'write'});
         this.calendars.get(id)!.touched = ++this.version;
     }
 

@@ -2,11 +2,10 @@ import {type Context, normalizeAddress} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {header, type CalDavRequest, type CalDavResponse, xmlResponse} from './http.ts';
 import {type Component, ICAL, IcsError, parseIcs, type Property, TimeResolver} from './ical.ts';
-import {busyPeriods, type Range} from './timerange.ts';
+import {busyOfCalendar, freeBusyLines, icsUtc, type Period, PRODID} from './freebusy.ts';
+import type {Range} from './timerange.ts';
 import type {ScheduleStatus, SchedulingMessage} from './types.ts';
 import {cal, d} from './xml.ts';
-
-const PRODID = '-//caldav-provider-server//EN';
 
 /** Properties whose change makes the organizer send a new REQUEST. */
 const SIGNIFICANT = ['dtstart', 'dtend', 'duration', 'due', 'rrule', 'rdate', 'exdate', 'summary', 'location', 'description', 'status'];
@@ -288,11 +287,9 @@ const REQUEST_STATUS: Record<string, string> = {
 
 const requestStatus = (s: string) => `${s};${REQUEST_STATUS[s] ?? 'Unknown'}`;
 
-const icsUtc = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-
 async function freeBusyFor(ctx: Context, address: string, range: Range, maskUid: string | undefined): Promise<string | null> {
     const s = ctx.provider.scheduling!;
-    const periods: {start: number; end: number; type: string}[] = [];
+    const periods: Period[] = [];
     if (s.freeBusy) {
         const busy = await s.freeBusy(ctx.principal, address, {start: new Date(range.start), end: new Date(range.end)}, maskUid);
         if (!busy) return null;
@@ -302,28 +299,16 @@ async function freeBusyFor(ctx: Context, address: string, range: Range, maskUid:
             const end = Math.min(period.end.getTime(), range.end);
             if (end > start) periods.push({start, end, type: period.type ?? 'BUSY'});
         }
-        periods.sort((a, b) => a.start - b.start);
-        return periods.map((p) => `FREEBUSY;FBTYPE=${p.type}:${icsUtc(p.start)}/${icsUtc(p.end)}`).join('\r\n');
+        return freeBusyLines(periods).join('\r\n');
     }
     const principal = s.findPrincipal ? await s.findPrincipal(address) : null;
     if (!principal) return null;
-    const query = {componentType: 'VEVENT' as const, timeRange: {start: new Date(range.start), end: new Date(range.end)}};
     for (const calendar of await ctx.provider.listCalendars(principal)) {
-        if (!calendar.components.includes('VEVENT')) continue;
-        for (const object of await ctx.provider.listObjects(principal, calendar, query)) {
-            let vcal;
-            try {
-                vcal = parseIcs(object.ics);
-            } catch {
-                continue;
-            }
-            const events = vcal.getAllSubcomponents('vevent');
-            if (!events.length || (maskUid && events[0]!.getFirstPropertyValue('uid') === maskUid)) continue;
-            periods.push(...busyPeriods(events, new TimeResolver(vcal), range));
-        }
+        // Transparent calendars don't make their owner busy (RFC 6638 9.1).
+        if (calendar.transparent) continue;
+        periods.push(...(await busyOfCalendar(ctx.provider, principal, calendar, range, maskUid)));
     }
-    periods.sort((a, b) => a.start - b.start);
-    return periods.map((p) => `FREEBUSY;FBTYPE=${p.type}:${icsUtc(p.start)}/${icsUtc(p.end)}`).join('\r\n');
+    return freeBusyLines(periods).join('\r\n');
 }
 
 function freeBusyReply(request: Component, recipient: string, busy: string, range: Range): string {

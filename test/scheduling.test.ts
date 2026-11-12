@@ -180,6 +180,19 @@ describe('scheduling collections', () => {
         expect(res.body).toContain('FREEBUSY;FBTYPE=BUSY-TENTATIVE:20260310T140000Z/20260310T150000Z');
         expect(res.body).not.toContain('20260310T120000Z/');
         expect(res.body).toContain('3.7;Invalid calendar user');
+
+        // A transparent calendar doesn't make Bob busy.
+        const patch = await request('PROPPATCH', '/dav/calendars/bob/bobcal/', {
+            user: 'bob',
+            body: '<d:propertyupdate xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:set><d:prop><c:schedule-calendar-transp><c:transparent/></c:schedule-calendar-transp></d:prop></d:set></d:propertyupdate>',
+        });
+        expect(patch.body).toContain('200 OK');
+        const again = await request('POST', '/dav/outbox/alice/', {
+            body,
+            headers: {'content-type': 'text/calendar', originator: 'mailto:alice@example.com', recipient: 'mailto:bob@example.com'},
+        });
+        expect(again.body).toContain('2.0;Success');
+        expect(again.body).not.toContain('FREEBUSY;');
     });
 
     it('free-busy from the provider when it has freeBusy', async () => {

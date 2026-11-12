@@ -128,7 +128,12 @@ def(NS.DAV, 'supported-report-set', (ctx, r) => {
     const report = (ns: string, name: string) => d('supported-report', d('report', el(ns, name)));
     switch (r.kind) {
         case 'calendar':
-            return ok(report(NS.CALDAV, 'calendar-query'), report(NS.CALDAV, 'calendar-multiget'), report(NS.DAV, 'sync-collection'));
+            return ok(
+                report(NS.CALDAV, 'calendar-query'),
+                report(NS.CALDAV, 'calendar-multiget'),
+                report(NS.CALDAV, 'free-busy-query'),
+                report(NS.DAV, 'sync-collection'),
+            );
         case 'inbox':
             return ok(report(NS.CALDAV, 'calendar-query'), report(NS.CALDAV, 'calendar-multiget'));
         case 'home':
@@ -230,8 +235,8 @@ def(NS.CALDAV, 'schedule-default-calendar-URL', async (ctx, r) => {
     return c ? ok(href(ctx.calendarHref(c))) : undefined;
 });
 
-def(NS.CALDAV, 'schedule-calendar-transp', (ctx, r) =>
-    r.kind === 'calendar' && ctx.scheduling ? ok(cal('opaque')) : undefined,
+def(NS.CALDAV, 'schedule-calendar-transp', (_ctx, r) =>
+    r.kind === 'calendar' ? ok(cal(r.calendar.transparent ? 'transparent' : 'opaque')) : undefined,
 );
 
 def(NS.CALDAV, 'schedule-tag', (ctx, r) => {

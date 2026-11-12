@@ -427,7 +427,7 @@ describe('REPORT', () => {
 
     it('rejects unsupported reports', async () => {
         const {request} = await seeded();
-        const res = await request('REPORT', '/dav/calendars/alice/personal/', {body: '<c:free-busy-query xmlns:c="urn:ietf:params:xml:ns:caldav"/>'});
+        const res = await request('REPORT', '/dav/calendars/alice/personal/', {body: '<d:acl-principal-prop-set xmlns:d="DAV:"/>'});
         expect(res.status).toBe(403);
         expect(res.body).toContain('supported-report');
     });

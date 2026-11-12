@@ -348,12 +348,22 @@ describe('managing calendars', () => {
         });
     });
 
-    it('Apple Calendar: calendar-timezone and transparency answer 403', async () => {
+    it('Apple Calendar sets calendar-timezone and transparency', async () => {
         const send = server();
         const tz = await send('PROPPATCH', CAL, fixture('apple-calendar/18-proppatch-calendar-timezone.xml'), XML);
-        expect(propStatuses(tz)).toEqual({'calendar-timezone': 403});
+        expect(propStatuses(tz)).toEqual({'calendar-timezone': 200});
         const transp = await send('PROPPATCH', CAL, fixture('apple-calendar/21-proppatch-calendar-transparent.xml'), XML);
-        expect(propStatuses(transp)).toEqual({'schedule-calendar-transp': 403});
+        expect(propStatuses(transp)).toEqual({'schedule-calendar-transp': 200});
+        const p = props(
+            await send(
+                'PROPFIND',
+                CAL,
+                '<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-timezone/><c:schedule-calendar-transp/></d:prop></d:propfind>',
+                {depth: '0'},
+            ),
+        )[CAL]!;
+        expect(p['calendar-timezone']).toContain('TZID:America/Los_Angeles');
+        expect(p['schedule-calendar-transp']).toBe('transparent');
     });
 
     it('read-only calendars answer 403', async () => {

@@ -99,7 +99,7 @@ describe('MKCALENDAR and extended MKCOL', () => {
         });
         expect(res.status).toBe(201);
         expect(res.headers.Location).toBe(`${HOME}new%20one/`);
-        expect(created).toEqual([{id: 'new one', input: {displayName: 'New', color: '#00FF00', components: ['VTODO']}}]);
+        expect(created).toEqual([{id: 'new one', input: {displayName: 'New', color: '#00FF00', components: ['VTODO'], transparent: false}}]);
     });
 
     it('works without a body and defaults name and components', async () => {

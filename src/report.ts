@@ -1,6 +1,7 @@
 import {type Context, homeSyncToken, normalizeAddresses, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
+import {floatingZoneOf, freeBusyQuery} from './freebusy.ts';
 import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
 import {parseIcs} from './ical.ts';
 import {propResponse, statusResponse} from './props.ts';
@@ -40,7 +41,7 @@ async function calendarQuery(ctx: Context, root: XmlElement, path: string): Prom
     const list = calendar
         ? await ctx.provider.listObjects(ctx.principal, calendar, queryFromFilter(filter))
         : await objects!();
-    const floating = calendar?.timezone ? floatingZoneOf(calendar.timezone) : undefined;
+    const floating = floatingZoneOf(calendar?.timezone);
     const responses: XNode[] = [];
     for (const object of list) {
         let vcal;
@@ -53,11 +54,6 @@ async function calendarQuery(ctx: Context, root: XmlElement, path: string): Prom
         responses.push(await propResponse(ctx, asResource(calendar, object), props));
     }
     return multistatus(responses);
-}
-
-/** TZID of the VTIMEZONE in calendar-timezone, used for floating times. */
-function floatingZoneOf(timezone: string): string | undefined {
-    return /^TZID:(.+)$/m.exec(timezone)?.[1]?.trim();
 }
 
 async function calendarMultiget(ctx: Context, root: XmlElement, path: string): Promise<CalDavResponse> {
@@ -275,6 +271,7 @@ export async function handleReport(ctx: Context, req: CalDavRequest, path: strin
     if (!root) throw new CalDavError(400, 'REPORT needs a body');
     if (is(root, NS.CALDAV, 'calendar-query')) return calendarQuery(ctx, root, path);
     if (is(root, NS.CALDAV, 'calendar-multiget')) return calendarMultiget(ctx, root, path);
+    if (is(root, NS.CALDAV, 'free-busy-query')) return freeBusyQuery(ctx, root, path);
     if (is(root, NS.DAV, 'sync-collection')) return syncCollection(ctx, root, path);
     if (is(root, NS.DAV, 'expand-property')) return expandProperty(ctx, root, path);
     if (is(root, NS.DAV, 'principal-property-search')) return principalPropertySearch(ctx, root);

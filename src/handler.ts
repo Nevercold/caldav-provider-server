@@ -1,5 +1,6 @@
 import {getAttachment, handleAttachmentPost, managedIdsOf} from './attachments.ts';
 import {deleteCalendar, mkcalendar, proppatchCollection} from './collections.ts';
+import {canonicalPath, checkLocks, handleLock, handleUnlock} from './locks.ts';
 import {Context, notificationName, quoteEtag, type Resource, unquoteEtag} from './context.ts';
 import {handleInviteReply, handleShare, notificationBody, notificationEtag} from './sharing.ts';
 import {CalDavError} from './errors.ts';
@@ -30,7 +31,24 @@ export interface CalDavOptions<P extends Principal = Principal> {
 
 export type CalDavHandler = (request: CalDavRequest) => Promise<CalDavResponse>;
 
-const METHODS = ['OPTIONS', 'GET', 'HEAD', 'PUT', 'DELETE', 'PROPFIND', 'PROPPATCH', 'REPORT', 'POST', 'MKCOL', 'MKCALENDAR', 'MOVE', 'COPY', 'ACL'];
+const METHODS = [
+    'OPTIONS',
+    'GET',
+    'HEAD',
+    'PUT',
+    'DELETE',
+    'PROPFIND',
+    'PROPPATCH',
+    'REPORT',
+    'POST',
+    'MKCOL',
+    'MKCALENDAR',
+    'MOVE',
+    'COPY',
+    'ACL',
+    'LOCK',
+    'UNLOCK',
+];
 
 /** HTTP methods the server answers; frameworks need to route these. */
 export const CALDAV_METHODS: readonly string[] = METHODS;
@@ -384,9 +402,41 @@ function optionsResponse(provider: CalDavProvider<never>): CalDavResponse {
     };
 }
 
+/** Lock checks of the methods that change something (RFC 4918 7). */
+async function enforceLocks(ctx: Context, req: ParsedRequest, method: string, path: string): Promise<void> {
+    const target = canonicalPath(ctx, path);
+    const destination = () => {
+        const value = header(req, 'destination');
+        if (!value) return [];
+        try {
+            return [canonicalPath(ctx, new URL(value, 'http://x').pathname)];
+        } catch {
+            return [];
+        }
+    };
+    switch (method) {
+        case 'PUT':
+        case 'PROPPATCH':
+        case 'MKCOL':
+        case 'MKCALENDAR':
+            return checkLocks(ctx, req, [target]);
+        case 'POST':
+            if (new URL(req.url, 'http://x').searchParams.get('action')?.startsWith('attachment-')) return checkLocks(ctx, req, [target]);
+            return;
+        case 'DELETE':
+            return checkLocks(ctx, req, [target], true);
+        case 'MOVE':
+            await checkLocks(ctx, req, [target], true);
+            return checkLocks(ctx, req, destination());
+        case 'COPY':
+            return checkLocks(ctx, req, destination());
+    }
+}
+
 function davHeader(provider: CalDavProvider<never>): string {
     return [
         '1',
+        ...(provider.locks ? ['2'] : []),
         '3',
         'access-control',
         'calendar-access',
@@ -447,8 +497,22 @@ export function createCalDavHandler<P extends Principal>(options: CalDavOptions<
             const ctx = await contextFor(provider, base, principal, path);
             const proto = header(req, 'x-forwarded-proto')?.split(',')[0]?.trim() || 'http';
             ctx.origin = (options.origin ?? `${proto}://${header(req, 'host') ?? 'localhost'}`).replace(/\/+$/, '');
+            if (provider.locks) await enforceLocks(ctx, req, method, path);
             let res: CalDavResponse;
             switch (method) {
+                case 'LOCK': {
+                    let found = false;
+                    try {
+                        found = exists(await ctx.resolve(path));
+                    } catch (e) {
+                        if (!(e instanceof CalDavError) || e.status !== 404) throw e;
+                    }
+                    res = await handleLock(ctx, req, path, found);
+                    break;
+                }
+                case 'UNLOCK':
+                    res = await handleUnlock(ctx, req, path);
+                    break;
                 case 'PROPFIND':
                     res = await propfind(ctx, req, path);
                     break;

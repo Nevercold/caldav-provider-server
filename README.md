@@ -125,6 +125,7 @@ becomes a 500 and is passed to `onError`.
 | `delegates(principal)`, `setDelegates(…)`   | no       | the principal's delegates, shown and changed by clients         |
 | `sharing`                                   | no       | sharing calendars from the client (Apple Calendar), see below   |
 | `attachments`                               | no       | managed attachments (RFC 8607), see below                       |
+| `locks`                                     | no       | `LOCK` / `UNLOCK` storage, see below                            |
 
 ### Principal
 
@@ -416,6 +417,22 @@ const attachments: AttachmentProvider<User> = {
 - Request bodies may be bytes (`Uint8Array`/`Buffer`); the Fastify plugin passes them through. Attachment downloads
   answer with bytes as `body`.
 
+### Locking
+
+None of the common CalDAV clients locks, but generic WebDAV tools do. With a `locks` provider the server supports
+`LOCK` / `UNLOCK` (WebDAV class 2, `DAV: 1, 2, 3`), `lockdiscovery` and `supportedlock`, and refuses changes to locked
+resources with 423 unless the `If` header carries the lock token of the lock's holder. Locks have to be visible to
+every server instance; `MemoryLocks` keeps them in memory for a single one:
+
+```ts
+import {MemoryLocks} from 'caldav-provider-server';
+
+const provider = {...myProvider, locks: new MemoryLocks()};
+```
+
+For several instances, implement `LockProvider` (`find`, `findBelow`, `save`, `remove`) on a shared store such as
+Redis or your database. Timeouts default to an hour and are capped at a day.
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -456,9 +473,12 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - `PROPPATCH` of anything but calendars
 - Changing ACLs: `DAV:acl`, `supported-privilege-set` and `acl-restrictions` are reported (the user's own privileges
   as one protected ACE), the `ACL` method answers 403; who may do what is up to the provider
-- Locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
-  `putObject` and sends no invitations)
-- Other users' calendars: their principal URL answers with `getPrincipal`, their calendar home 403
+- `MOVE` and `COPY` of collections; objects move and copy between calendars (`COPY` stores the copy with `putObject`
+  and sends no invitations)
+- Other users' calendars without a delegation: their principal URL answers with `getPrincipal`, their calendar
+  home 403
+- Locks of unmapped URLs (they would create empty resources). Locks belong to a URL: a shared calendar reached through
+  another user's URL is not covered by them
 - Publishing calendars (`CS:can-be-published`, webcal) and the WebDAV resource sharing draft (`share-resource`,
   draft-pot-webdav-resource-sharing); sharing follows CalendarServer's model that Apple Calendar uses
 - Inline attachments are stored as part of the object like any other property; there is no size check for them

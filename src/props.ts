@@ -1,6 +1,7 @@
 import {applyCalendarData} from './calendardata.ts';
 import {floatingZoneOf} from './freebusy.ts';
 import {inviteProperty, notificationEtag, notificationsSyncToken} from './sharing.ts';
+import {lockDiscovery, supportedLock} from './locks.ts';
 import {type Context, homeSyncToken, normalizeAddresses, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
 import type {Calendar, PrincipalSearchResult} from './types.ts';
@@ -311,6 +312,11 @@ def(
     },
     false,
 );
+
+// --- Locking (RFC 4918 15.8, 15.10), only with a lock provider ---
+
+def(NS.DAV, 'lockdiscovery', (ctx, r) => lockDiscovery(ctx, ctx.href(r)));
+def(NS.DAV, 'supportedlock', (ctx) => (ctx.provider.locks ? supportedLock() : undefined));
 
 // --- Managed attachments (RFC 8607) ---
 

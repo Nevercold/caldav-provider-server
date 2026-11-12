@@ -2,6 +2,7 @@ export {CalDavError} from './errors.ts';
 export {CALDAV_METHODS, createCalDavHandler, type CalDavHandler, type CalDavOptions} from './handler.ts';
 export type {CalDavRequest, CalDavResponse} from './http.ts';
 export {processSchedulingMessage, type ProcessedMessage} from './itip.ts';
+export {MemoryLocks} from './locks.ts';
 export type {
     AttachmentInput,
     AttachmentProvider,
@@ -30,6 +31,8 @@ export type {
     ShareStatus,
     SharingProvider,
     Invitation,
+    Lock,
+    LockProvider,
     SchedulingMessage,
     SchedulingProvider,
     TimeRange,

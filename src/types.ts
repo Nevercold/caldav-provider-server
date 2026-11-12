@@ -306,6 +306,35 @@ export interface AttachmentProvider<P extends Principal = Principal> {
     maxPerObject?: number;
 }
 
+/** A WebDAV lock (RFC 4918 6). */
+export interface Lock {
+    /** `urn:uuid:…`, created by the server. */
+    token: string;
+    /** Path of the locked resource, e.g. `/dav/calendars/jane/work/`. */
+    path: string;
+    /** Id of the principal who holds the lock. */
+    principal: string;
+    scope: 'exclusive' | 'shared';
+    depth: '0' | 'infinity';
+    /** The client's DAV:owner element, serialized, if it sent one. */
+    owner?: string;
+    timeoutSeconds: number;
+    expires: Date;
+}
+
+/**
+ * Storage of locks. Locks must be visible to every server instance, so they live with the provider;
+ * `MemoryLocks` is enough for a single instance.
+ */
+export interface LockProvider {
+    /** Unexpired locks on any of these paths. */
+    find(paths: string[]): Promise<Lock[]>;
+    /** Unexpired locks on these paths or below them (for Depth: infinity locks and deletes). */
+    findBelow(path: string): Promise<Lock[]>;
+    save(lock: Lock): Promise<void>;
+    remove(token: string): Promise<void>;
+}
+
 /** A principal whose calendars the user may use. */
 export interface Delegation<P extends Principal = Principal> {
     principal: P;
@@ -372,6 +401,8 @@ export interface CalDavProvider<P extends Principal = Principal> {
     sharing?: SharingProvider<P>;
     /** Enables managed attachments (RFC 8607). */
     attachments?: AttachmentProvider<P>;
+    /** Enables LOCK/UNLOCK (WebDAV class 2). None of the common CalDAV clients needs it. */
+    locks?: LockProvider;
     /**
      * Other calendar users the principal may find, e.g. to invite them
      * (principal-property-search, Apple's calendarserver-principal-search).

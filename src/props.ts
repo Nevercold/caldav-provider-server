@@ -1,8 +1,8 @@
 import {applyCalendarData} from './calendardata.ts';
 import {floatingZoneOf} from './freebusy.ts';
-import {type Context, homeSyncToken, quoteEtag, type Resource, syncTokenUri} from './context.ts';
+import {type Context, homeSyncToken, normalizeAddresses, quoteEtag, type Resource, syncTokenUri} from './context.ts';
 import {parseIcs, peekObject} from './ical.ts';
-import type {Calendar} from './types.ts';
+import type {Calendar, PrincipalSearchResult} from './types.ts';
 import {cal, d, el, type Kid, NS, type QName, qkey, type XNode} from './xml.ts';
 
 export type PropResult = {status: 200; value: Kid[]} | {status: 403 | 404};
@@ -281,7 +281,39 @@ export function allPropNames(): QName[] {
     });
 }
 
+/** Properties of another user's principal (search results and `getPrincipal`). */
+function otherPrincipalProp(ctx: Context, found: PrincipalSearchResult, q: QName): Kid[] | undefined {
+    const self = `${ctx.principalsHref()}${encodeURIComponent(found.id)}/`;
+    const addresses = normalizeAddresses(found.addresses);
+    switch (qkey(q)) {
+        case qkey({ns: NS.DAV, name: 'displayname'}):
+            return [found.displayName ?? found.id];
+        case qkey({ns: NS.DAV, name: 'resourcetype'}):
+            return [d('collection'), d('principal')];
+        case qkey({ns: NS.DAV, name: 'principal-URL'}):
+            return [href(self)];
+        case qkey({ns: NS.DAV, name: 'current-user-principal'}):
+            return [href(ctx.principalHref())];
+        case qkey({ns: NS.DAV, name: 'current-user-privilege-set'}):
+            return privileges([NS.DAV, 'read']);
+        case qkey({ns: NS.CALDAV, name: 'calendar-user-address-set'}):
+            return [...addresses.map(href), href(self)];
+        case qkey({ns: NS.CALDAV, name: 'calendar-user-type'}):
+            return ['INDIVIDUAL'];
+        case qkey({ns: NS.CS, name: 'email-address-set'}):
+            return addresses.filter((a) => a.startsWith('mailto:')).map((a) => el(NS.CS, 'email-address', a.slice(7)));
+        case qkey({ns: NS.CS, name: 'record-type'}):
+            return ['users'];
+        default:
+            return undefined;
+    }
+}
+
 export async function getProp(ctx: Context, r: Resource, q: QName): Promise<PropResult> {
+    if (r.kind === 'other-principal') {
+        const value = otherPrincipalProp(ctx, r.found, q);
+        return value === undefined ? {status: 404} : {status: 200, value};
+    }
     const getter = getters[qkey(q)];
     if (!getter) return {status: 404};
     const value = await getter(ctx, r);

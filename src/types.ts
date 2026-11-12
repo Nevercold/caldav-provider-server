@@ -283,4 +283,10 @@ export interface CalDavProvider<P extends Principal = Principal> {
      * a search only finds the principal itself.
      */
     searchPrincipals?(principal: P, query: PrincipalSearchQuery): Promise<PrincipalSearchResult[]>;
+    /**
+     * Another user by id, for a PROPFIND on their principal URL (clients look up attendees and
+     * organizers there). Return null if the principal may not see them (404). Without it,
+     * other principals' URLs answer 403.
+     */
+    getPrincipal?(principal: P, id: string): Promise<PrincipalSearchResult | null>;
 }

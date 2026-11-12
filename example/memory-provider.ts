@@ -196,6 +196,11 @@ export class MemoryProvider implements CalDavProvider<User> {
             .map((u) => ({id: u.id, displayName: u.displayName, addresses: u.addresses ?? []}));
     }
 
+    async getPrincipal(_principal: User, id: string): Promise<PrincipalSearchResult | null> {
+        const u = this.users.get(id);
+        return u ? {id: u.id, displayName: u.displayName, addresses: u.addresses ?? []} : null;
+    }
+
     private userByAddress(address: string): User | undefined {
         const mail = address.replace(/^mailto:/i, '').toLowerCase();
         return [...this.users.values()].find((u) => u.addresses?.some((a) => a.replace(/^mailto:/i, '').toLowerCase() === mail));

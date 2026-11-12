@@ -120,6 +120,7 @@ becomes a 500 and is passed to `onError`.
 | `deleteCalendar(principal, calendar)`       | no       | `DELETE` of a whole calendar                                    |
 | `scheduling`                                | no       | enables RFC 6638, see below                                     |
 | `searchPrincipals(principal, query)`        | no       | other users to find, e.g. to invite them, see below             |
+| `getPrincipal(principal, id)`               | no       | another user by id, for a `PROPFIND` on their principal URL     |
 
 ### Principal
 
@@ -323,6 +324,9 @@ Results answer `displayname`, `calendar-user-address-set`, `email-address-set`, 
 Without it, a search only finds the signed-in user (Thunderbird looks itself up that way) and no searchable properties
 are offered.
 
+Clients sometimes read a found user's principal URL afterwards. `getPrincipal(principal, id)` returns the same shape
+as a search result, or `null` for users the principal may not see (404); without it such URLs answer 403.
+
 ## Clients
 
 The tests replay request bodies of real clients against the server (`test/fixtures`, sources and how each body was
@@ -363,7 +367,7 @@ more properties; check a setup with the example server below, and `RECORD=…` t
 - `PROPPATCH` of anything but calendars
 - ACLs (`DAV:acl`), locking; `MOVE` and `COPY` only of objects between calendars (`COPY` stores the copy with
   `putObject` and sends no invitations)
-- Reading other principals' resources: a found principal's URL answers 403; clients only need its search result
+- Other users' calendars: their principal URL answers with `getPrincipal`, their calendar home 403
 - Delegation and proxies (`calendar-proxy-*`), sharing invitations (`CS:invite`)
 - Attachments (managed attachments, RFC 8607)
 

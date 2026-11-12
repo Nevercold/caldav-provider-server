@@ -1,11 +1,13 @@
 import type {CalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
-import type {Calendar, CalDavProvider, CalendarObject, Principal} from './types.ts';
+import type {Calendar, CalDavProvider, CalendarObject, Principal, PrincipalSearchResult} from './types.ts';
 
 export type Resource =
     | {kind: 'root'}
     | {kind: 'principals'}
     | {kind: 'principal'}
+    /** Another user, as `getPrincipal` describes them. */
+    | {kind: 'other-principal'; found: PrincipalSearchResult}
     | {kind: 'home'}
     | {kind: 'calendar'; calendar: Calendar}
     | {kind: 'object'; calendar: Calendar; name: string; object: CalendarObject | null}
@@ -142,6 +144,8 @@ export class Context<P extends Principal = Principal> {
                 return this.principalsHref();
             case 'principal':
                 return this.principalHref();
+            case 'other-principal':
+                return `${this.principalsHref()}${this.seg(r.found.id)}/`;
             case 'home':
                 return this.homeHref();
             case 'calendar':
@@ -186,7 +190,15 @@ export class Context<P extends Principal = Principal> {
             if (area === 'principals') return {kind: 'principals'};
             throw CalDavError.notFound();
         }
-        if (owner !== this.principal.id) throw CalDavError.forbidden('resource of another principal');
+        if (owner !== this.principal.id) {
+            // Other users' principal URLs can be read if the provider describes them.
+            if (area === 'principals' && !rest.length && this.provider.getPrincipal) {
+                const found = await this.provider.getPrincipal(this.principal, owner);
+                if (!found) throw CalDavError.notFound();
+                return {kind: 'other-principal', found: {...found, id: owner}};
+            }
+            throw CalDavError.forbidden('resource of another principal');
+        }
 
         if (area === 'principals') {
             if (rest.length) throw CalDavError.notFound();

@@ -1,4 +1,4 @@
-import {type Context, homeSyncToken, normalizeAddresses, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
+import {type Context, homeSyncToken, parseHomeSyncToken, parseSyncTokenUri, type Resource, syncTokenUri} from './context.ts';
 import {parseCalendarDataRequest} from './calendardata.ts';
 import {CalDavError} from './errors.ts';
 import {FilterError, matchesFilter, parseFilter, queryFromFilter} from './filter.ts';
@@ -6,8 +6,8 @@ import {floatingZoneOf, freeBusyQuery} from './freebusy.ts';
 import {type CalDavRequest, type CalDavResponse, multistatus, parseBody, xmlResponse} from './http.ts';
 import {parseIcs} from './ical.ts';
 import {propResponse, statusResponse} from './props.ts';
-import type {Calendar, CalendarObject, PrincipalSearchQuery, PrincipalSearchResult} from './types.ts';
-import {child, children, d, el, is, type Kid, NS, type QName, qkey, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
+import type {Calendar, CalendarObject, PrincipalSearchQuery} from './types.ts';
+import {child, children, d, el, is, NS, type QName, qnameOf, textOf, type XmlElement, type XNode} from './xml.ts';
 
 function requestedProps(root: XmlElement): QName[] {
     const prop = child(root, NS.DAV, 'prop');
@@ -143,45 +143,6 @@ async function syncHome(ctx: Context, tokenUri: string, props: QName[]): Promise
     return multistatus(responses, d('sync-token', syncTokenUri(homeSyncToken(calendars))));
 }
 
-/** Properties a found principal (not the signed-in one) answers with. */
-function foundPrincipalProp(ctx: Context, found: PrincipalSearchResult, q: QName): Kid[] | undefined {
-    const href = (h: string) => d('href', h);
-    const self = `${ctx.principalsHref()}${encodeURIComponent(found.id)}/`;
-    const addresses = normalizeAddresses(found.addresses);
-    const name = found.displayName ?? found.id;
-    switch (qkey(q)) {
-        case qkey({ns: NS.DAV, name: 'displayname'}):
-            return [name];
-        case qkey({ns: NS.DAV, name: 'resourcetype'}):
-            return [d('collection'), d('principal')];
-        case qkey({ns: NS.DAV, name: 'principal-URL'}):
-            return [href(self)];
-        case qkey({ns: NS.CALDAV, name: 'calendar-user-address-set'}):
-            return [...addresses.map(href), href(self)];
-        case qkey({ns: NS.CALDAV, name: 'calendar-user-type'}):
-            return ['INDIVIDUAL'];
-        case qkey({ns: NS.CS, name: 'email-address-set'}):
-            return addresses.filter((a) => a.startsWith('mailto:')).map((a) => el(NS.CS, 'email-address', a.slice(7)));
-        case qkey({ns: NS.CS, name: 'record-type'}):
-            return ['users'];
-        default:
-            return undefined;
-    }
-}
-
-function foundPrincipalResponse(ctx: Context, found: PrincipalSearchResult, props: QName[]): XNode {
-    const values = props.map((q) => ({q, value: foundPrincipalProp(ctx, found, q)}));
-    const ok = values.filter((v) => v.value !== undefined).map((v) => el(v.q.ns, v.q.name, ...v.value!));
-    const missing = values.filter((v) => v.value === undefined).map((v) => el(v.q.ns, v.q.name));
-    const propstat = (list: XNode[], status: string) => d('propstat', d('prop', ...list), d('status', status));
-    return d(
-        'response',
-        d('href', `${ctx.principalsHref()}${encodeURIComponent(found.id)}/`),
-        ok.length || !missing.length ? propstat(ok, 'HTTP/1.1 200 OK') : null,
-        missing.length ? propstat(missing, 'HTTP/1.1 404 Not Found') : null,
-    );
-}
-
 /**
  * The signed-in principal if the terms match its id, name or addresses (clients
  * look themselves up this way), plus the provider's results.
@@ -201,7 +162,7 @@ async function principalSearch(ctx: Context, query: PrincipalSearchQuery, props:
         for (const f of found) {
             if (f.id === ctx.principal.id) continue;
             if (query.limit && responses.length >= query.limit) break;
-            responses.push(foundPrincipalResponse(ctx, f, props));
+            responses.push(await propResponse(ctx, {kind: 'other-principal', found: f}, props));
         }
     }
     return multistatus(responses);

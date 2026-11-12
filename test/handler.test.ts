@@ -258,6 +258,25 @@ describe('principal search', () => {
         expect(res.body).toMatch(/<cs:first-name\/><\/d:prop><d:status>HTTP\/1.1 404/);
     });
 
+    it('reads other principals through getPrincipal', async () => {
+        const {request, provider} = setup();
+        const res = await request('PROPFIND', '/dav/principals/bob/', {
+            headers: {depth: '0'},
+            body: PROPFIND('<d:displayname/><c:calendar-user-address-set/><d:resourcetype/><c:calendar-home-set/>'),
+        });
+        expect(res.status).toBe(207);
+        expect(props(res)['/dav/principals/bob/']).toEqual({
+            displayname: 'Bob',
+            'calendar-user-address-set': 'href(mailto:bob@example.com) href(/dav/principals/bob/)',
+            resourcetype: 'collection principal',
+        });
+        expect(res.body).toMatch(/<cal:calendar-home-set\/><\/d:prop><d:status>HTTP\/1.1 404/);
+        expect((await request('PROPFIND', '/dav/principals/nobody/', {headers: {depth: '0'}})).status).toBe(404);
+        expect((await request('PROPFIND', '/dav/calendars/bob/', {headers: {depth: '0'}})).status).toBe(403);
+        (provider as {getPrincipal?: unknown}).getPrincipal = undefined;
+        expect((await request('PROPFIND', '/dav/principals/bob/', {headers: {depth: '0'}})).status).toBe(403);
+    });
+
     it('still finds the user itself (Thunderbird looks itself up)', async () => {
         const {request} = setup();
         const res = await request('REPORT', '/dav/principals/', {
